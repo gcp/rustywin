@@ -1,0 +1,6 @@
+[package]
+name = "rustywin"
+version = "0.1.0"
+authors = ["Gian-Carlo Pascutto <gcp@sjeng.org>"]
+
+[dependencies]
