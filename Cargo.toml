@@ -1,8 +1,12 @@
 [package]
 name = "rustywin"
-version = "0.1.0"
+version = "0.0.1"
 authors = ["Gian-Carlo Pascutto <gcp@sjeng.org>"]
 readme = "README.md"
 license = "MPL-2.0"
 
 [dependencies]
+clippy = {version = "*", optional = true}
+
+[features]
+default = []
