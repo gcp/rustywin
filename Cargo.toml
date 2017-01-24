@@ -2,5 +2,7 @@
 name = "rustywin"
 version = "0.1.0"
 authors = ["Gian-Carlo Pascutto <gcp@sjeng.org>"]
+readme = "README.md"
+license = "MPL-2.0"
 
 [dependencies]
