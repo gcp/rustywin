@@ -8,15 +8,28 @@ use log::{LogRecord, LogLevelFilter, SetLoggerError};
 use env_logger::LogBuilder;
 
 fn setup_logging() -> Result<(), SetLoggerError> {
-    let format = |record: &LogRecord| {
-        format!("{} - {}", record.level(), record.args())
-    };
+    let format = |record: &LogRecord| format!("{} - {}", record.level(), record.args());
     let mut builder = LogBuilder::new();
     builder.format(format).filter(None, LogLevelFilter::Info);
     if env::var("RUST_LOG").is_ok() {
-       builder.parse(&env::var("RUST_LOG").unwrap());
+        builder.parse(&env::var("RUST_LOG").unwrap());
     }
     builder.init()
+}
+
+fn get_exe_name() -> Option<String> {
+    let my_name = match env::current_exe() {
+        Ok(t) => t,
+        Err(_) => {
+            error!("Couldn't parse exe name");
+            return None;
+        }
+    };
+    let my_filename = my_name.file_name();
+    match my_filename {
+        Some(y) => Some(String::from(y.to_string_lossy())),
+        _ => None,
+    }
 }
 
 fn main() {
@@ -24,9 +37,7 @@ fn main() {
 
     info!("Rusty Windows - Starting up");
 
-    let my_fullpath = env::current_exe().unwrap();
-    let my_filename = my_fullpath.file_name().unwrap();
-    let my_name = my_filename.to_str().unwrap();
+    let my_name = get_exe_name().expect("Couldn't parse current executable name");
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 2 {

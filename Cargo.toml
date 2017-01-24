@@ -6,7 +6,7 @@ readme = "README.md"
 license = "MPL-2.0"
 
 [dependencies]
-clippy = {version = "*", optional = true}
+clippy = {version = "*"}
 log = "0.3"
 env_logger = "0.4"
 
