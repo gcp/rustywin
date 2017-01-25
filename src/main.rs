@@ -2,11 +2,15 @@
 extern crate log;
 extern crate env_logger;
 
+mod display;
+use display::*;
+
 use std::io::Write;
 use std::env;
 use log::{LogRecord, LogLevelFilter, SetLoggerError};
 use env_logger::LogBuilder;
 
+/// Set up `env_logger` to log from Info and up.
 fn setup_logging() -> Result<(), SetLoggerError> {
     let format = |record: &LogRecord| format!("{} - {}", record.level(), record.args());
     let mut builder = LogBuilder::new();
@@ -17,18 +21,25 @@ fn setup_logging() -> Result<(), SetLoggerError> {
     builder.init()
 }
 
+/// Return the name of our executable if possible.
+///
+/// This will strip any path components, leaving just the bare command.
+///
 fn get_exe_name() -> Option<String> {
     let my_name = match env::current_exe() {
-        Ok(t) => t,
+        Ok(s) => s,
         Err(_) => {
-            error!("Couldn't parse exe name");
+            error!("Couldn't obtain current execitable name");
             return None;
         }
     };
-    let my_filename = my_name.file_name();
-    match my_filename {
-        Some(y) => Some(String::from(y.to_string_lossy())),
-        _ => None,
+    let my_filename_str = match my_name.file_name() {
+        Some(os_str) => os_str.to_str(),
+        None => return None,
+    };
+    match my_filename_str {
+        Some(s) => Some(String::from(s)),
+        None => None,
     }
 }
 
@@ -47,4 +58,20 @@ fn main() {
         assert_eq!(args.len(), 2);
         info!("Applying rustywin to \"{}\"", &args[1]);
     }
+
+    // Get the X11 display connection
+    let key = "DISPLAY";
+    let x11_display = match env::var(key) {
+        Ok(val) => {
+            info!("{}={}", key, val);
+            val
+        },
+        Err(e) => {
+            error!("Couldn't interpret {}: {}", key, e);
+            std::process::exit(1);
+        }
+    };
+
+    let connection = parse_x11_display(x11_display.as_str());
+
 }

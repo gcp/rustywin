@@ -1,5 +1,6 @@
 // Place your settings in this file to overwrite default and user settings.
 {
     "rust.checkWith": "clippy",
-    "rust.checkOnSave": true
+    "rust.checkOnSave": true,
+    "rust.useNewErrorFormat": true
 }
