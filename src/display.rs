@@ -1,9 +1,11 @@
+#[derive(Debug, Eq, PartialEq)]
 enum X11ConnectionType {
     Local,
     TCP,
     DECnet,
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct X11ConnectionDescriptor {
     connection_type: X11ConnectionType,
     host_name: Option<String>,
@@ -73,4 +75,26 @@ pub fn parse_x11_display(display: &str) -> X11ConnectionDescriptor {
         server_num: server.expect("Could not parse server value in DISPLAY"),
         screen_num: screen.expect("Could not prase screen number in DISPLAY"),
     }
+}
+
+#[test]
+fn test_parse_x11_display() {
+    let display = ":0";
+    let connection = parse_x11_display(&display);
+    assert_eq!(connection.connection_type, X11ConnectionType::Local);
+    assert_eq!(connection.host_name, None);
+    assert_eq!(connection.screen_num, 0);
+    assert_eq!(connection.server_num, 0);
+    let display = "mozilla.org:1.2";
+    let connection = parse_x11_display(&display);
+    assert_eq!(connection.connection_type, X11ConnectionType::TCP);
+    assert_eq!(connection.host_name.unwrap(), "mozilla.org");
+    assert_eq!(connection.screen_num, 1);
+    assert_eq!(connection.server_num, 2);
+}
+
+#[test]
+#[should_panic]
+fn test_parse_x11_display_fail() {
+    unimplemented!();
 }
