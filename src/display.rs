@@ -1,11 +1,11 @@
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 enum X11ConnectionType {
     Local,
     TCP,
     DECnet,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct X11ConnectionDescriptor {
     connection_type: X11ConnectionType,
     host_name: Option<String>,
@@ -56,7 +56,7 @@ pub fn parse_x11_display(display: &str) -> X11ConnectionDescriptor {
     let screen_idx = server_screen.find('.');
     // This part must always be present.
     let server = match screen_idx {
-        Some(idx) => server_screen[idx - 1..].parse::<i32>(),
+        Some(idx) => server_screen[..idx].parse::<i32>(),
         None => server_screen.parse::<i32>(),
     };
     // This one is optional so we may take default.
@@ -89,12 +89,15 @@ fn test_parse_x11_display() {
     let connection = parse_x11_display(&display);
     assert_eq!(connection.connection_type, X11ConnectionType::TCP);
     assert_eq!(connection.host_name.unwrap(), "mozilla.org");
-    assert_eq!(connection.screen_num, 1);
-    assert_eq!(connection.server_num, 2);
+    assert_eq!(connection.server_num, 1);
+    assert_eq!(connection.screen_num, 2);
 }
 
 #[test]
 #[should_panic]
 fn test_parse_x11_display_fail() {
-    unimplemented!();
+    let display = "udp/x:0.2";
+    parse_x11_display(&display);
+    let display = "x:x.2";
+    parse_x11_display(&display);
 }
