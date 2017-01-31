@@ -77,27 +77,32 @@ pub fn parse_x11_display(display: &str) -> X11ConnectionDescriptor {
     }
 }
 
-#[test]
-fn test_parse_x11_display() {
-    let display = ":0";
-    let connection = parse_x11_display(&display);
-    assert_eq!(connection.connection_type, X11ConnectionType::Local);
-    assert_eq!(connection.host_name, None);
-    assert_eq!(connection.screen_num, 0);
-    assert_eq!(connection.server_num, 0);
-    let display = "mozilla.org:1.2";
-    let connection = parse_x11_display(&display);
-    assert_eq!(connection.connection_type, X11ConnectionType::TCP);
-    assert_eq!(connection.host_name.unwrap(), "mozilla.org");
-    assert_eq!(connection.server_num, 1);
-    assert_eq!(connection.screen_num, 2);
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[test]
-#[should_panic]
-fn test_parse_x11_display_fail() {
-    let display = "udp/x:0.2";
-    parse_x11_display(&display);
-    let display = "x:x.2";
-    parse_x11_display(&display);
+    #[test]
+    fn test_parse_x11_display() {
+        let display = ":0";
+        let connection = parse_x11_display(&display);
+        assert_eq!(connection.connection_type, X11ConnectionType::Local);
+        assert_eq!(connection.host_name, None);
+        assert_eq!(connection.screen_num, 0);
+        assert_eq!(connection.server_num, 0);
+        let display = "mozilla.org:1.2";
+        let connection = parse_x11_display(&display);
+        assert_eq!(connection.connection_type, X11ConnectionType::TCP);
+        assert_eq!(connection.host_name.unwrap(), "mozilla.org");
+        assert_eq!(connection.server_num, 1);
+        assert_eq!(connection.screen_num, 2);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_parse_x11_display_fail() {
+        let display = "udp/x:0.2";
+        parse_x11_display(&display);
+        let display = "x:x.2";
+        parse_x11_display(&display);
+    }
 }
