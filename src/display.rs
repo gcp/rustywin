@@ -1,5 +1,5 @@
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-enum X11ConnectionType {
+pub enum X11ConnectionType {
     Local,
     TCP,
     DECnet,
@@ -9,8 +9,18 @@ enum X11ConnectionType {
 pub struct X11ConnectionDescriptor {
     connection_type: X11ConnectionType,
     host_name: Option<String>,
-    server_num: i32,
-    screen_num: i32,
+    server_num: usize,
+    screen_num: usize,
+}
+
+impl X11ConnectionDescriptor {
+    pub fn is_unix_socket(&self) -> bool {
+        self.connection_type == X11ConnectionType::Local
+    }
+
+    pub fn screen_num(&self) -> usize {
+        self.screen_num
+    }
 }
 
 pub fn parse_x11_display(display: &str) -> X11ConnectionDescriptor {
@@ -56,12 +66,12 @@ pub fn parse_x11_display(display: &str) -> X11ConnectionDescriptor {
     let screen_idx = server_screen.find('.');
     // This part must always be present.
     let server = match screen_idx {
-        Some(idx) => server_screen[..idx].parse::<i32>(),
-        None => server_screen.parse::<i32>(),
+        Some(idx) => server_screen[..idx].parse::<usize>(),
+        None => server_screen.parse::<usize>(),
     };
     // This one is optional so we may take default.
     let screen = match screen_idx {
-        Some(idx) => server_screen[idx + 1..].parse::<i32>(),
+        Some(idx) => server_screen[idx + 1..].parse::<usize>(),
         None => Ok(0),
     };
 

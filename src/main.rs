@@ -5,6 +5,9 @@ extern crate env_logger;
 mod display;
 use display::*;
 
+mod socket;
+use socket::*;
+
 use std::io::Write;
 use std::env;
 use log::{LogRecord, LogLevelFilter, SetLoggerError};
@@ -74,4 +77,7 @@ fn main() {
 
     let connection = parse_x11_display(x11_display.as_str());
 
+    if connection.is_unix_socket() {
+        let socket = connect_unix_socket(&connection);
+    }
 }
