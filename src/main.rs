@@ -1,6 +1,9 @@
 #[macro_use]
 extern crate log;
 extern crate env_logger;
+extern crate itertools;
+extern crate nix;
+extern crate libc;
 
 mod display;
 use display::*;
