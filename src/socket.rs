@@ -5,7 +5,7 @@ use display::*;
 use std::os::unix::net::{UnixStream, UnixListener};
 use std::io::prelude::*;
 use std::io::{BufReader, BufWriter, Seek, SeekFrom};
-use std::fs::{File, remove_file, OpenOptions};
+use std::fs::{remove_file, OpenOptions};
 use std::os::unix::io::AsRawFd;
 use std::env;
 use nix::fcntl::{flock, FlockArg};
@@ -13,7 +13,26 @@ use nix::unistd::getpid;
 use itertools::Itertools;
 use libc;
 
-pub struct Connection;
+pub struct SocketConnection {
+    listen_socket: UnixListener,
+    send_stream: UnixStream,
+}
+
+impl SocketConnection {
+    pub fn listen_socket(&self) -> &UnixListener {
+        &self.listen_socket
+    }
+
+    pub fn send_stream(&self) -> &UnixStream {
+        &self.send_stream
+    }
+
+    pub fn set_nonblocking(&self) -> std::io::Result<()> {
+        self.listen_socket.set_nonblocking(true)?;
+        self.send_stream.set_nonblocking(true)?;
+        Ok(())
+    }
+}
 
 // /tmp/.X11-unix/Xn
 // Unix domain socket for display number n
@@ -67,7 +86,7 @@ pub fn cleanup_old_sockets() -> Result<(), std::io::Error> {
               socket_list,
               e);
     };
-    // Record file contents as we go, well drop the lines
+    // Record file contents as we go, we'll drop the lines
     // we're unlinking.
     let mut lines_not_cleaned = Vec::new();
 
@@ -113,7 +132,7 @@ pub fn cleanup_old_sockets() -> Result<(), std::io::Error> {
     }
 
     // Now rewrite the file, cleaned
-    file.seek(SeekFrom::Start(0));
+    file.seek(SeekFrom::Start(0))?;
     let mut writer = BufWriter::new(&file);
     for line in &lines_not_cleaned {
         writeln!(writer, "{}", line)?;
@@ -139,7 +158,7 @@ fn register_socket_for_cleanup(filename: &str) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-pub fn connect_unix_socket(x11_conn: &X11ConnectionDescriptor) -> Connection {
+pub fn connect_unix_socket(x11_conn: &X11ConnectionDescriptor) -> SocketConnection {
     let original_screen_num = x11_conn.screen_num();
 
     if let Err(e) = cleanup_old_sockets() {
@@ -172,10 +191,21 @@ pub fn connect_unix_socket(x11_conn: &X11ConnectionDescriptor) -> Connection {
     let listener = match UnixListener::bind(new_unix_socket_name) {
         Ok(socket) => socket,
         Err(e) => {
-            panic!("Couldn't bind to Unix socket: {}", e);
+            panic!("Couldn't bind to listener Unix socket: {}", e);
         }
     };
 
+    let target_unix_socket_name = format!("{}{}{}", X11_SOCKET_DIR, 'X', original_screen_num);
 
-    Connection {}
+    let sender = match UnixStream::connect(target_unix_socket_name) {
+        Ok(socket) => socket,
+        Err(e) => {
+            panic!("Couldn't bind to sender Unix socket: {}", e);
+        }
+    };
+
+    SocketConnection {
+        listen_socket: listener,
+        send_stream: sender,
+    }
 }
