@@ -4,7 +4,7 @@ use std::path::Path;
 use display::*;
 use std::os::unix::net::{UnixStream, UnixListener};
 use std::io::prelude::*;
-use std::io::{BufReader, BufWriter, Seek, SeekFrom};
+use std::io::{BufReader, BufWriter, Seek, SeekFrom, ErrorKind};
 use std::fs::{remove_file, OpenOptions};
 use std::os::unix::io::AsRawFd;
 use std::env;
@@ -14,6 +14,7 @@ use itertools::Itertools;
 use libc;
 
 pub struct SocketConnection {
+    client_display_name: String,
     listen_socket: UnixListener,
     send_stream: UnixStream,
 }
@@ -27,10 +28,8 @@ impl SocketConnection {
         &self.send_stream
     }
 
-    pub fn set_nonblocking(&self) -> std::io::Result<()> {
-        self.listen_socket.set_nonblocking(true)?;
-        self.send_stream.set_nonblocking(true)?;
-        Ok(())
+    pub fn get_display(&self) -> &str {
+        self.client_display_name.as_str()
     }
 }
 
@@ -120,9 +119,13 @@ pub fn cleanup_old_sockets() -> Result<(), std::io::Error> {
             if res != 0 {
                 info!("Process {} is dead, cleaning socket {}", pid, socket_path);
                 if let Err(e) = remove_file(socket_path) {
-                    warn!("Failed to remove old socket {} due to: {}", socket_path, e);
-                    // Process no longer exists but couldn't remove socket
-                    lines_not_cleaned.push(line.clone());
+                    if e.kind() != ErrorKind::NotFound {
+                        warn!("Failed to remove old socket {} due to: {}", socket_path, e);
+                        // Process no longer exists but couldn't remove socket
+                        lines_not_cleaned.push(line.clone());
+                    } else {
+                        info!("Socket {} already seems to be deleted.", socket_path);
+                    }
                 }
             } else {
                 // Process still exists
@@ -133,6 +136,7 @@ pub fn cleanup_old_sockets() -> Result<(), std::io::Error> {
 
     // Now rewrite the file, cleaned
     file.seek(SeekFrom::Start(0))?;
+    file.set_len(0)?;
     let mut writer = BufWriter::new(&file);
     for line in &lines_not_cleaned {
         writeln!(writer, "{}", line)?;
@@ -159,14 +163,14 @@ fn register_socket_for_cleanup(filename: &str) -> Result<(), std::io::Error> {
 }
 
 pub fn connect_unix_socket(x11_conn: &X11ConnectionDescriptor) -> SocketConnection {
-    let original_screen_num = x11_conn.screen_num();
+    let original_server_num = x11_conn.server_num();
 
     if let Err(e) = cleanup_old_sockets() {
         warn!("Failure cleaning up old sockets: {}", e);
     };
 
-    let existing_screens = enumerate_unix_x11_sockets();
-    let free_screen_num = match existing_screens.iter().max() {
+    let existing_servers = enumerate_unix_x11_sockets();
+    let free_server_num = match existing_servers.iter().max() {
         // Next available from max
         Some(idx) => idx + 1,
         // Anything is OK, but where's the original connection?
@@ -175,9 +179,9 @@ pub fn connect_unix_socket(x11_conn: &X11ConnectionDescriptor) -> SocketConnecti
             0
         }
     };
-    info!("Next available X11 screen: #{}", free_screen_num);
+    info!("Next available X11 server: #{}", free_server_num);
 
-    let new_unix_socket_name = format!("{}{}{}", X11_SOCKET_DIR, 'X', free_screen_num);
+    let new_unix_socket_name = format!("{}{}{}", X11_SOCKET_DIR, 'X', free_server_num);
     info!("Creating socket at {}", new_unix_socket_name);
 
     // XXX: We need to recover any old sockets of ours here when we start up,
@@ -188,6 +192,9 @@ pub fn connect_unix_socket(x11_conn: &X11ConnectionDescriptor) -> SocketConnecti
         warn!("Failure recording sockets in use: {}", e);
     }
 
+    // construct new DISPLAY for client exe
+    let client_display_name = format!(":{}", free_server_num);
+
     let listener = match UnixListener::bind(new_unix_socket_name) {
         Ok(socket) => socket,
         Err(e) => {
@@ -195,7 +202,7 @@ pub fn connect_unix_socket(x11_conn: &X11ConnectionDescriptor) -> SocketConnecti
         }
     };
 
-    let target_unix_socket_name = format!("{}{}{}", X11_SOCKET_DIR, 'X', original_screen_num);
+    let target_unix_socket_name = format!("{}{}{}", X11_SOCKET_DIR, 'X', original_server_num);
 
     let sender = match UnixStream::connect(target_unix_socket_name) {
         Ok(socket) => socket,
@@ -205,6 +212,7 @@ pub fn connect_unix_socket(x11_conn: &X11ConnectionDescriptor) -> SocketConnecti
     };
 
     SocketConnection {
+        client_display_name: client_display_name,
         listen_socket: listener,
         send_stream: sender,
     }

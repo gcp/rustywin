@@ -18,6 +18,10 @@ impl X11ConnectionDescriptor {
         self.connection_type == X11ConnectionType::Local
     }
 
+    pub fn server_num(&self) -> usize {
+        self.server_num
+    }
+
     pub fn screen_num(&self) -> usize {
         self.screen_num
     }

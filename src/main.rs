@@ -10,10 +10,16 @@ use display::*;
 
 mod socket;
 use socket::*;
+
+mod client;
+use client::*;
+
 use std::io::prelude::*;
+use std::io::{Error, ErrorKind};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixStream, UnixListener};
 use std::env;
+use std::process::{Child, Command};
 use log::{LogRecord, LogLevelFilter, SetLoggerError};
 use env_logger::LogBuilder;
 use nix::sys::select::{FdSet, select};
@@ -41,7 +47,7 @@ fn get_exe_name() -> Option<String> {
     let my_name = match env::current_exe() {
         Ok(s) => s,
         Err(_) => {
-            error!("Couldn't obtain current execitable name");
+            error!("Couldn't obtain current executable name");
             return None;
         }
     };
@@ -82,6 +88,79 @@ fn make_coffee_grab_bite(client_stream: &UnixStream,
     Ok(())
 }
 
+fn run_unix_socket_loop(sockets: &SocketConnection, mut client_handle: Child) {
+    let mut server_stream = sockets.send_stream();
+
+    loop {
+        // XXX: Do we need to support multiple clients?
+        // XXX: yet both for e10s and certainly e10s-multiple
+        // XXX: can test with non-e10s for now tho
+        let listen_socket = sockets.listen_socket();
+        let mut client_stream = match listen_socket.accept() {
+            Ok((stream, _)) => stream,
+            Err(e) => {
+                error!("Error accepting socket: {}", e);
+                panic!("Broken clients are no good anyway");
+                // continue;
+            }
+        };
+
+        server_stream.set_nonblocking(true).expect("Couldn't set sockets to nonblocking");
+        client_stream.set_nonblocking(true).expect("Couldn't set sockets to nonblocking");
+
+        loop {
+            // XXX: Some canonical way to avoid the useless init?
+            let mut buffer: [u8; BUFFER_SIZE] = [0; BUFFER_SIZE];
+
+            let read = match client_stream.read(&mut buffer) {
+                Ok(size) => size,
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => 0,
+                Err(e) => {
+                    error!("Read error from socket: {}", e);
+                    break;
+                }
+            };
+
+            if read > 0 {
+                info!("C->S {} bytes", read);
+                if let Err(e) = server_stream.write_all(&buffer[0..read]) {
+                    if e.kind() != ErrorKind::WouldBlock {
+                        error!("Write error on socket: {}", e);
+                        break;
+                    }
+                }
+            }
+
+            let read = match server_stream.read(&mut buffer) {
+                Ok(size) => size,
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => 0,
+                Err(e) => {
+                    error!("Read error from socket: {}", e);
+                    break;
+                }
+            };
+
+            if read > 0 {
+                info!("S->C {} bytes", read);
+                if let Err(e) = client_stream.write_all(&buffer[0..read]) {
+                    if e.kind() != ErrorKind::WouldBlock {
+                        error!("Write error on socket: {}", e);
+                        break;
+                    }
+                }
+            }
+
+            // Now just block here until anything shows up.
+            if let Err(e) = make_coffee_grab_bite(&client_stream, server_stream) {
+                break;
+            }
+        }
+
+        info!("Waiting for client to exit");
+        client_handle.wait().expect("Client exited abornomally");
+    }
+}
+
 fn main() {
     setup_logging().unwrap();
 
@@ -90,11 +169,14 @@ fn main() {
     let my_name = get_exe_name().expect("Couldn't parse current executable name");
 
     let args: Vec<String> = std::env::args().collect();
-    if args.len() != 2 {
-        writeln!(std::io::stderr(), "Usage: {} <target program>", my_name).unwrap();
+    if args.len() < 2 {
+        writeln!(std::io::stderr(),
+                 "Usage: {} <target program> <arguments>",
+                 my_name)
+            .unwrap();
         std::process::exit(1);
     } else {
-        assert_eq!(args.len(), 2);
+        assert!(args.len() >= 2);
         info!("Applying rustywin to \"{}\"", &args[1]);
     }
 
@@ -115,60 +197,8 @@ fn main() {
 
     if connection.is_unix_socket() {
         let sockets = connect_unix_socket(&connection);
-        sockets.set_nonblocking().expect("Couldn't set sockets to nonblocking");
-
-        let mut server_stream = sockets.send_stream();
-
-        loop {
-            // XXX: Do we need to support multiple clients?
-            let listen_socket = sockets.listen_socket();
-            let mut client_stream = match listen_socket.accept() {
-                Ok((stream, _)) => stream,
-                Err(e) => {
-                    error!("Error accepting socket: {}", e);
-                    continue;
-                }
-            };
-
-            loop {
-                // XXX: Some canonical way to avoid the useless init?
-                let mut buffer: [u8; BUFFER_SIZE] = [0; BUFFER_SIZE];
-
-                let read = match client_stream.read(&mut buffer) {
-                    Ok(size) => size,
-                    Err(e) => {
-                        error!("Read error from socket: {}", e);
-                        continue;
-                    }
-                };
-
-                if read > 0 {
-                    if let Err(e) = server_stream.write_all(&buffer) {
-                        error!("Write error on socket: {}", e);
-                        break;
-                    }
-                }
-
-                let read = match server_stream.read(&mut buffer) {
-                    Ok(size) => size,
-                    Err(e) => {
-                        error!("Read error from socket: {}", e);
-                        continue;
-                    }
-                };
-
-                if read > 0 {
-                    if let Err(e) = client_stream.write_all(&buffer) {
-                        error!("Write error on socket: {}", e);
-                        break;
-                    }
-                }
-
-                // Now just block here until anything shows up.
-                if let Err(e) = make_coffee_grab_bite(&client_stream, server_stream) {
-                    break;
-                }
-            }
-        }
+        let display_for_client = sockets.get_display();
+        let client_handle = launch_client(args[1].as_str(), &args[2..], display_for_client);
+        run_unix_socket_loop(&sockets, client_handle);
     }
 }
