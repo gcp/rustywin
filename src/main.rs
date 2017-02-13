@@ -88,6 +88,59 @@ fn make_coffee_grab_bite(client_stream: &UnixStream,
     Ok(())
 }
 
+fn client_message_loop(mut client_stream: UnixStream, mut server_stream: &UnixStream) {
+    server_stream.set_nonblocking(true).expect("Couldn't set sockets to nonblocking");
+    client_stream.set_nonblocking(true).expect("Couldn't set sockets to nonblocking");
+
+    loop {
+        // XXX: Some canonical way to avoid the useless init?
+        let mut buffer: [u8; BUFFER_SIZE] = [0; BUFFER_SIZE];
+
+        let read = match client_stream.read(&mut buffer) {
+            Ok(size) => size,
+            Err(ref e) if e.kind() == ErrorKind::WouldBlock => 0,
+            Err(e) => {
+                error!("Read error from socket: {}", e);
+                break;
+            }
+        };
+
+        if read > 0 {
+            info!("C->S {} bytes", read);
+            if let Err(e) = server_stream.write_all(&buffer[0..read]) {
+                if e.kind() != ErrorKind::WouldBlock {
+                    error!("Write error on socket: {}", e);
+                    break;
+                }
+            }
+        }
+
+        let read = match server_stream.read(&mut buffer) {
+            Ok(size) => size,
+            Err(ref e) if e.kind() == ErrorKind::WouldBlock => 0,
+            Err(e) => {
+                error!("Read error from socket: {}", e);
+                break;
+            }
+        };
+
+        if read > 0 {
+            info!("S->C {} bytes", read);
+            if let Err(e) = client_stream.write_all(&buffer[0..read]) {
+                if e.kind() != ErrorKind::WouldBlock {
+                    error!("Write error on socket: {}", e);
+                    break;
+                }
+            }
+        }
+
+        // Now just block here until anything shows up.
+        if let Err(e) = make_coffee_grab_bite(&client_stream, server_stream) {
+            break;
+        }
+    }
+}
+
 fn run_unix_socket_loop(sockets: &SocketConnection, mut client_handle: Child) {
     let mut server_stream = sockets.send_stream();
 
@@ -96,7 +149,7 @@ fn run_unix_socket_loop(sockets: &SocketConnection, mut client_handle: Child) {
         // XXX: yet both for e10s and certainly e10s-multiple
         // XXX: can test with non-e10s for now tho
         let listen_socket = sockets.listen_socket();
-        let mut client_stream = match listen_socket.accept() {
+        let client_stream = match listen_socket.accept() {
             Ok((stream, _)) => stream,
             Err(e) => {
                 error!("Error accepting socket: {}", e);
@@ -105,56 +158,7 @@ fn run_unix_socket_loop(sockets: &SocketConnection, mut client_handle: Child) {
             }
         };
 
-        server_stream.set_nonblocking(true).expect("Couldn't set sockets to nonblocking");
-        client_stream.set_nonblocking(true).expect("Couldn't set sockets to nonblocking");
-
-        loop {
-            // XXX: Some canonical way to avoid the useless init?
-            let mut buffer: [u8; BUFFER_SIZE] = [0; BUFFER_SIZE];
-
-            let read = match client_stream.read(&mut buffer) {
-                Ok(size) => size,
-                Err(ref e) if e.kind() == ErrorKind::WouldBlock => 0,
-                Err(e) => {
-                    error!("Read error from socket: {}", e);
-                    break;
-                }
-            };
-
-            if read > 0 {
-                info!("C->S {} bytes", read);
-                if let Err(e) = server_stream.write_all(&buffer[0..read]) {
-                    if e.kind() != ErrorKind::WouldBlock {
-                        error!("Write error on socket: {}", e);
-                        break;
-                    }
-                }
-            }
-
-            let read = match server_stream.read(&mut buffer) {
-                Ok(size) => size,
-                Err(ref e) if e.kind() == ErrorKind::WouldBlock => 0,
-                Err(e) => {
-                    error!("Read error from socket: {}", e);
-                    break;
-                }
-            };
-
-            if read > 0 {
-                info!("S->C {} bytes", read);
-                if let Err(e) = client_stream.write_all(&buffer[0..read]) {
-                    if e.kind() != ErrorKind::WouldBlock {
-                        error!("Write error on socket: {}", e);
-                        break;
-                    }
-                }
-            }
-
-            // Now just block here until anything shows up.
-            if let Err(e) = make_coffee_grab_bite(&client_stream, server_stream) {
-                break;
-            }
-        }
+        client_message_loop(client_stream, server_stream);
 
         info!("Waiting for client to exit");
         client_handle.wait().expect("Client exited abornomally");
