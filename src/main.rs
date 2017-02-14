@@ -88,7 +88,7 @@ fn make_coffee_grab_bite(client_stream: &UnixStream,
     Ok(())
 }
 
-fn client_message_loop(mut client_stream: UnixStream, mut server_stream: &UnixStream) {
+fn client_message_loop(mut client_stream: UnixStream, server_stream: &mut UnixStream) {
     server_stream.set_nonblocking(true).expect("Couldn't set sockets to nonblocking");
     client_stream.set_nonblocking(true).expect("Couldn't set sockets to nonblocking");
 
