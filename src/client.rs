@@ -1,5 +1,3 @@
-use std::io::prelude::*;
-use std::io::Result;
 use std::process::{Child, Command};
 
 pub fn launch_client(client_exe: &str, args: &[String], display: &str) -> Child {

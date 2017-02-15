@@ -15,17 +15,29 @@ use libc;
 
 pub struct SocketConnection {
     client_display_name: String,
-    listen_socket: UnixListener,
-    send_stream: UnixStream,
+    client_socket_name: String,
+    server_socket_name: String,
 }
 
 impl SocketConnection {
-    pub fn listen_socket(&self) -> &UnixListener {
-        &self.listen_socket
+    pub fn listen_socket(&self) -> Option<UnixListener> {
+        match UnixListener::bind(&self.client_socket_name) {
+            Ok(socket) => Some(socket),
+            Err(e) => {
+                error!("Couldn't bind to listener Unix socket: {}", e);
+                None
+            }
+        }
     }
 
-    pub fn send_stream(&self) -> &UnixStream {
-        &self.send_stream
+    pub fn send_stream(&self) -> Option<UnixStream> {
+        match UnixStream::connect(&self.server_socket_name) {
+            Ok(socket) => Some(socket),
+            Err(e) => {
+                error!("Couldn't bind to sender Unix socket: {}", e);
+                None
+            }
+        }
     }
 
     pub fn get_display(&self) -> &str {
@@ -162,7 +174,7 @@ fn register_socket_for_cleanup(filename: &str) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-pub fn connect_unix_socket(x11_conn: &X11ConnectionDescriptor) -> SocketConnection {
+pub fn setup_unix_socket(x11_conn: &X11ConnectionDescriptor) -> SocketConnection {
     let original_server_num = x11_conn.server_num();
 
     if let Err(e) = cleanup_old_sockets() {
@@ -195,25 +207,12 @@ pub fn connect_unix_socket(x11_conn: &X11ConnectionDescriptor) -> SocketConnecti
     // construct new DISPLAY for client exe
     let client_display_name = format!(":{}", free_server_num);
 
-    let listener = match UnixListener::bind(new_unix_socket_name) {
-        Ok(socket) => socket,
-        Err(e) => {
-            panic!("Couldn't bind to listener Unix socket: {}", e);
-        }
-    };
-
+    // construct path for original X11 socket
     let target_unix_socket_name = format!("{}{}{}", X11_SOCKET_DIR, 'X', original_server_num);
-
-    let sender = match UnixStream::connect(target_unix_socket_name) {
-        Ok(socket) => socket,
-        Err(e) => {
-            panic!("Couldn't bind to sender Unix socket: {}", e);
-        }
-    };
 
     SocketConnection {
         client_display_name: client_display_name,
-        listen_socket: listener,
-        send_stream: sender,
+        client_socket_name: new_unix_socket_name,
+        server_socket_name: target_unix_socket_name,
     }
 }
