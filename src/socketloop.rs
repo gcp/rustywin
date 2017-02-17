@@ -3,18 +3,21 @@ use socket::*;
 use std::io::prelude::*;
 use std::io::ErrorKind;
 use std::os::unix::io::{RawFd, AsRawFd};
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::{UnixStream, UnixListener};
 use std::process::Child;
 use std::thread;
 
 use nix;
 use nix::sys::select::{FdSet, select};
-use nix::c_int;
+use nix::{c_int, Errno, Error};
+use nix::Error::Sys;
 use nix::sys::time::TimeVal;
 
 const BUFFER_SIZE: usize = 1 << 16;
 
-pub fn run_unix_socket_loop(sockets: SocketConnection, mut client_handle: Child) {
+pub fn run_unix_socket_loop(sockets: SocketConnection,
+                            listen_socket: UnixListener,
+                            mut client_handle: Child) {
     // We need the stderr fd number from the child. Given that we wait()
     // on it here and takes a mut ref, we need to extract that fd now.
     // We add this to the select() fdset to ensure all threads get messaged on death.
@@ -30,21 +33,23 @@ pub fn run_unix_socket_loop(sockets: SocketConnection, mut client_handle: Child)
         }
     };
 
-    thread::spawn(move || accept_loop(sockets, child_stderr_fd));
+    thread::spawn(move || accept_loop(sockets, listen_socket, child_stderr_fd));
 
     info!("Waiting for client to exit");
     client_handle.wait().expect("Client exited abornomally");
 }
 
-fn accept_loop(sockets: SocketConnection, stderr_fd: Option<RawFd>) {
-    let listen_socket = match sockets.listen_socket() {
-        Some(socket) => socket,
+pub fn setup_listen_socket(sockets: &SocketConnection) -> Option<UnixListener> {
+    match sockets.listen_socket() {
+        Some(socket) => Some(socket),
         None => {
             error!("No socket to listen on, nothing to do.");
-            return;
+            None
         }
-    };
+    }
+}
 
+fn accept_loop(sockets: SocketConnection, listen_socket: UnixListener, stderr_fd: Option<RawFd>) {
     listen_socket.set_nonblocking(true).expect("Couldn't set accept loop to nonblocking.");
 
     loop {
@@ -109,9 +114,23 @@ fn client_message_loop(mut client_stream: UnixStream,
 
         if read > 0 {
             info!("C->S {} bytes", read);
-            if let Err(e) = server_stream.write_all(&buffer[0..read]) {
-                if e.kind() != ErrorKind::WouldBlock {
-                    error!("Write error on socket: {}", e);
+            let mut write_buff = &buffer[0..read];
+            loop {
+                let written = server_stream.write(&write_buff);
+                match written {
+                    Ok(n) => write_buff = &write_buff[n..],
+                    Ok(0) => {
+                        info!("Zero byte write.");
+                        break;
+                    }
+                    Err(ref e) if e.kind() == ErrorKind::Interrupted ||
+                                  e.kind() == ErrorKind::WouldBlock => {}
+                    Err(e) => {
+                        error!("Write error on socket: {}", e);
+                        break;
+                    }
+                }
+                if write_buff.is_empty() {
                     break;
                 }
             }
@@ -128,9 +147,23 @@ fn client_message_loop(mut client_stream: UnixStream,
 
         if read > 0 {
             info!("S->C {} bytes", read);
-            if let Err(e) = client_stream.write_all(&buffer[0..read]) {
-                if e.kind() != ErrorKind::WouldBlock {
-                    error!("Write error on socket: {}", e);
+            let mut write_buff = &buffer[0..read];
+            loop {
+                let written = client_stream.write(&write_buff);
+                match written {
+                    Ok(n) => write_buff = &write_buff[n..],
+                    Ok(0) => {
+                        info!("Zero byte write.");
+                        break;
+                    }
+                    Err(ref e) if e.kind() == ErrorKind::Interrupted ||
+                                  e.kind() == ErrorKind::WouldBlock => {}
+                    Err(e) => {
+                        error!("Write error on socket: {}", e);
+                        break;
+                    }
+                }
+                if write_buff.is_empty() {
                     break;
                 }
             }
@@ -147,9 +180,9 @@ fn client_message_loop(mut client_stream: UnixStream,
 }
 
 fn select_streams(client_stream: &UnixStream,
-              server_stream: &UnixStream,
-              child_stderr_fd: &Option<RawFd>)
-              -> Result<(), nix::Error> {
+                  server_stream: &UnixStream,
+                  child_stderr_fd: &Option<RawFd>)
+                  -> Result<(), nix::Error> {
     let client_stream_fd = client_stream.as_raw_fd();
     let server_stream_fd = server_stream.as_raw_fd();
     let mut fd_vec = vec![client_stream_fd as c_int, server_stream_fd as c_int];
@@ -167,15 +200,28 @@ fn select_on_vec(fdset_vec: Vec<c_int>) -> Result<(), nix::Error> {
     }
     let mut w_fdset = r_fdset.clone();
     let mut e_fdset = r_fdset.clone();
-    let mut timeval = TimeVal::zero();
-    let nfds = fdset_vec.iter().max().unwrap();
-    if let Err(e) = select(nfds + 1,
-                           Some(&mut r_fdset),
-                           Some(&mut w_fdset),
-                           Some(&mut e_fdset),
-                           Some(&mut timeval)) {
-        info!("Error on select: {}", e);
-        return Err(e);
-    };
-    Ok(())
+    let nfds = fdset_vec.iter().cloned().max().unwrap();
+    loop {
+        match select(nfds + 1,
+                     Some(&mut r_fdset),
+                     Some(&mut w_fdset),
+                     Some(&mut e_fdset),
+                     None) {
+            Err(e) => {
+                match e {
+                    Sys(sysno) if sysno == Errno::EINTR => {
+                        continue;
+                    }
+                    Sys(_) | _ => {
+                        error!("Error on select: {}", e);
+                        return Err(e);
+                    }
+                }
+            }
+            Ok(count) => {
+                info!("Found {} awoken fds out of {}.", count, fdset_vec.len());
+                return Ok(());
+            }
+        }
+    }
 }
