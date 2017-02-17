@@ -84,8 +84,11 @@ fn main() {
 
     if connection.is_unix_socket() {
         let sockets = socket::setup_unix_socket(&connection);
-        let display_for_client = sockets.get_display();
-        let client_handle = client::launch_client(args[1].as_str(), &args[2..], display_for_client);
-        socketloop::run_unix_socket_loop(&sockets, client_handle);
+        // to_string() is needed here to break the lifetime link between
+        // sockets and (eventually) client_handle.
+        let display_for_client = sockets.get_display().to_string();
+        let client_handle =
+            client::launch_client(args[1].as_str(), &args[2..], display_for_client.as_str());
+        socketloop::run_unix_socket_loop(sockets, client_handle);
     }
 }
