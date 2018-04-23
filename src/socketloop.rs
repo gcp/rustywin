@@ -1,6 +1,7 @@
 use socket::*;
 
 use std::io::prelude::*;
+use std::io;
 use std::io::ErrorKind;
 use std::os::unix::io::{RawFd, AsRawFd};
 use std::os::unix::net::{UnixStream, UnixListener};
@@ -14,6 +15,30 @@ use nix::Error::Sys;
 use nix::sys::time::TimeVal;
 
 const BUFFER_SIZE: usize = 1 << 16;
+
+struct UnixSocketStream(UnixStream);
+
+impl UnixSocketStream {
+    /// Similar to write_all, but deals with WouldBlock
+    fn write_all_nonblock(&mut self, write_buff: &[u8]) -> Result<(), io::Error> {
+        loop {
+            let written = self.write(&write_buff);
+            match written {
+                Ok(0) => {
+                    return Err(io::Error::new(ErrorKind::WriteZero, "failed to write whole buffer"))
+                }
+                Ok(n) => write_buff = &write_buff[n..],
+                Err(ref e) if e.kind() == ErrorKind::Interrupted ||
+                              e.kind() == ErrorKind::WouldBlock => {}
+                Err(e) => return Err(e),
+            }
+            if write_buff.is_empty() {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
 
 pub fn run_unix_socket_loop(sockets: SocketConnection,
                             listen_socket: UnixListener,
@@ -93,8 +118,8 @@ fn handle_client(sockets: &SocketConnection, client_stream: UnixStream, stderr_f
     thread::spawn(move || client_message_loop(client_stream, server_stream, stderr_fd));
 }
 
-fn client_message_loop(mut client_stream: UnixStream,
-                       mut server_stream: UnixStream,
+fn client_message_loop(mut client_stream: UnixSocketStream,
+                       mut server_stream: UnixSocketStream,
                        child_stderr_fd: Option<RawFd>) {
     server_stream.set_nonblocking(true).expect("Couldn't set sockets to nonblocking");
     client_stream.set_nonblocking(true).expect("Couldn't set sockets to nonblocking");
@@ -115,23 +140,9 @@ fn client_message_loop(mut client_stream: UnixStream,
         if read > 0 {
             info!("C->S {} bytes", read);
             let mut write_buff = &buffer[0..read];
-            loop {
-                let written = server_stream.write(&write_buff);
-                match written {
-                    Ok(n) => write_buff = &write_buff[n..],
-                    Ok(0) => {
-                        info!("Zero byte write.");
-                        break;
-                    }
-                    Err(ref e) if e.kind() == ErrorKind::Interrupted ||
-                                  e.kind() == ErrorKind::WouldBlock => {}
-                    Err(e) => {
-                        error!("Write error on socket: {}", e);
-                        break;
-                    }
-                }
-                if write_buff.is_empty() {
-                    break;
+            match server_stream.write_all_nonblock(&write_buff) {
+                Err(e) => {
+                    info!("Write error on socket: {}", e);
                 }
             }
         }
@@ -148,23 +159,9 @@ fn client_message_loop(mut client_stream: UnixStream,
         if read > 0 {
             info!("S->C {} bytes", read);
             let mut write_buff = &buffer[0..read];
-            loop {
-                let written = client_stream.write(&write_buff);
-                match written {
-                    Ok(n) => write_buff = &write_buff[n..],
-                    Ok(0) => {
-                        info!("Zero byte write.");
-                        break;
-                    }
-                    Err(ref e) if e.kind() == ErrorKind::Interrupted ||
-                                  e.kind() == ErrorKind::WouldBlock => {}
-                    Err(e) => {
-                        error!("Write error on socket: {}", e);
-                        break;
-                    }
-                }
-                if write_buff.is_empty() {
-                    break;
+            match client_stream.write_all_nonblock(&write_buff) {
+                Err(e) => {
+                    info!("Write error on socket: {}", e);
                 }
             }
         }
