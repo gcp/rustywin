@@ -16,11 +16,14 @@ use nix::errno::Errno;
 
 const BUFFER_SIZE: usize = 1 << 16;
 
-struct UnixSocketStream(UnixStream);
-
-impl UnixSocketStream {
+trait WriteAllNonBlock {
     /// Similar to write_all, but deals with WouldBlock
     fn write_all_nonblock(&mut self, write_buff: &[u8])
+        -> Result<(), io::Error>;
+}
+
+impl WriteAllNonBlock for UnixStream {
+    fn write_all_nonblock(&mut self, mut write_buff: &[u8])
         -> Result<(), io::Error> {
         loop {
             let written = self.write(&write_buff);
@@ -120,8 +123,8 @@ fn handle_client(sockets: &SocketConnection, client_stream: UnixStream, stderr_f
     thread::spawn(move || client_message_loop(client_stream, server_stream, stderr_fd));
 }
 
-fn client_message_loop(mut client_stream: UnixSocketStream,
-                       mut server_stream: UnixSocketStream,
+fn client_message_loop(mut client_stream: UnixStream,
+                       mut server_stream: UnixStream,
                        child_stderr_fd: Option<RawFd>) {
     server_stream.set_nonblocking(true).expect("Couldn't set sockets to nonblocking");
     client_stream.set_nonblocking(true).expect("Couldn't set sockets to nonblocking");
@@ -141,8 +144,9 @@ fn client_message_loop(mut client_stream: UnixSocketStream,
 
         if read > 0 {
             info!("C->S {} bytes", read);
-            let mut write_buff = &buffer[0..read];
+            let write_buff = &buffer[0..read];
             match server_stream.write_all_nonblock(&write_buff) {
+                Ok(_) => (),
                 Err(e) => {
                     info!("Write error on socket: {}", e);
                 }
@@ -160,8 +164,9 @@ fn client_message_loop(mut client_stream: UnixSocketStream,
 
         if read > 0 {
             info!("S->C {} bytes", read);
-            let mut write_buff = &buffer[0..read];
+            let write_buff = &buffer[0..read];
             match client_stream.write_all_nonblock(&write_buff) {
+                Ok(_) => (),
                 Err(e) => {
                     info!("Write error on socket: {}", e);
                 }
