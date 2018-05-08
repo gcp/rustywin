@@ -1,4 +1,5 @@
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command};
+//use std::process::Stdio;
 
 pub fn launch_client(client_exe: &str, args: &[String], display: &str) -> Child {
     info!("Launching client process \"{}\" args {:?} with DISPLAY=\"{}\"",

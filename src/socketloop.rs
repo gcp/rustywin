@@ -10,9 +10,9 @@ use std::thread;
 
 use nix;
 use nix::sys::select::{FdSet, select};
-use nix::{c_int, Errno, Error};
+use nix::libc::c_int as c_int;
 use nix::Error::Sys;
-use nix::sys::time::TimeVal;
+use nix::errno::Errno;
 
 const BUFFER_SIZE: usize = 1 << 16;
 
@@ -20,12 +20,14 @@ struct UnixSocketStream(UnixStream);
 
 impl UnixSocketStream {
     /// Similar to write_all, but deals with WouldBlock
-    fn write_all_nonblock(&mut self, write_buff: &[u8]) -> Result<(), io::Error> {
+    fn write_all_nonblock(&mut self, write_buff: &[u8])
+        -> Result<(), io::Error> {
         loop {
             let written = self.write(&write_buff);
             match written {
                 Ok(0) => {
-                    return Err(io::Error::new(ErrorKind::WriteZero, "failed to write whole buffer"))
+                    return Err(io::Error::new(ErrorKind::WriteZero,
+                        "failed to write whole buffer"))
                 }
                 Ok(n) => write_buff = &write_buff[n..],
                 Err(ref e) if e.kind() == ErrorKind::Interrupted ||
@@ -45,8 +47,8 @@ pub fn run_unix_socket_loop(sockets: SocketConnection,
                             mut client_handle: Child) {
     // We need the stderr fd number from the child. Given that we wait()
     // on it here and takes a mut ref, we need to extract that fd now.
-    // We add this to the select() fdset to ensure all threads get messaged on death.
-    // http://stackoverflow.com/a/8976461/909836
+    // We add this to the select() fdset to ensure all threads get messaged
+    // on death. http://stackoverflow.com/a/8976461/909836
     let child_stderr_fd = match client_handle.stderr {
         Some(ref stderr) => {
             info!("Got a handle for stderr, will monitor for exit.");
@@ -192,14 +194,15 @@ fn select_streams(client_stream: &UnixStream,
 
 fn select_on_vec(fdset_vec: Vec<c_int>) -> Result<(), nix::Error> {
     let mut r_fdset = FdSet::new();
+    let mut w_fdset = FdSet::new();
+    let mut e_fdset = FdSet::new();
     for fd in &fdset_vec {
         r_fdset.insert(fd.clone());
+        w_fdset.insert(fd.clone());
+        e_fdset.insert(fd.clone());
     }
-    let mut w_fdset = r_fdset.clone();
-    let mut e_fdset = r_fdset.clone();
-    let nfds = fdset_vec.iter().cloned().max().unwrap();
     loop {
-        match select(nfds + 1,
+        match select(None,
                      Some(&mut r_fdset),
                      Some(&mut w_fdset),
                      Some(&mut e_fdset),

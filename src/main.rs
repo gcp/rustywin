@@ -15,18 +15,12 @@ mod client;
 
 use std::io::prelude::*;
 use std::env;
-use log::{LogRecord, LogLevelFilter, SetLoggerError};
-use env_logger::LogBuilder;
 
 /// Set up `env_logger` to log from Info and up.
-fn setup_logging() -> Result<(), SetLoggerError> {
-    let format = |record: &LogRecord| format!("{} - {}", record.level(), record.args());
-    let mut builder = LogBuilder::new();
-    builder.format(format).filter(None, LogLevelFilter::Info);
-    if env::var("RUST_LOG").is_ok() {
-        builder.parse(&env::var("RUST_LOG").unwrap());
-    }
-    builder.init()
+fn setup_logging() {
+    env_logger::Builder::from_default_env()
+        .default_format_timestamp(false)
+        .init();
 }
 
 /// Return the name of our executable if possible.
@@ -52,7 +46,7 @@ fn get_exe_name() -> Option<String> {
 }
 
 fn main() {
-    setup_logging().unwrap();
+    setup_logging();
 
     info!("Rusty Windows - Starting up");
 

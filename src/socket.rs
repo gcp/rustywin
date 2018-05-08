@@ -47,11 +47,11 @@ impl SocketConnection {
 
 // /tmp/.X11-unix/Xn
 // Unix domain socket for display number n
-const X11_SOCKET_DIR: &'static str = "/tmp/.X11-unix/";
+const X11_SOCKET_DIR: &str = "/tmp/.X11-unix/";
 
 // Store the list of sockets we create, used for cleanup.
 // Format: lines of "pid socket_path"
-const X11_SOCKET_LIST: &'static str = ".rustywin_sockets";
+const X11_SOCKET_LIST: &str = ".rustywin_sockets";
 
 pub fn enumerate_unix_x11_sockets() -> Vec<usize> {
     let mut existing_sockets: Vec<usize> = Vec::new();
