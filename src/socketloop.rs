@@ -1,40 +1,65 @@
 use socket::*;
 
-use std::io::prelude::*;
 use std::io;
+use std::io::prelude::*;
 use std::io::ErrorKind;
-use std::os::unix::io::{RawFd, AsRawFd};
-use std::os::unix::net::{UnixStream, UnixListener};
+use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::Child;
 use std::thread;
 
 use nix;
-use nix::sys::select::{FdSet, select};
-use nix::libc::c_int as c_int;
-use nix::Error::Sys;
 use nix::errno::Errno;
+use nix::libc::c_int;
+use nix::sys::select::{select, FdSet};
+use nix::Error::Sys;
 
 const BUFFER_SIZE: usize = 1 << 16;
 
 trait WriteAllNonBlock {
     /// Similar to write_all, but deals with WouldBlock
-    fn write_all_nonblock(&mut self, write_buff: &[u8])
-        -> Result<(), io::Error>;
+    fn write_all_nonblock(
+        &mut self,
+        write_buff: &[u8],
+        child_stderr_fd: &Option<RawFd>,
+    ) -> Result<(), io::Error>;
 }
 
 impl WriteAllNonBlock for UnixStream {
-    fn write_all_nonblock(&mut self, mut write_buff: &[u8])
-        -> Result<(), io::Error> {
+    fn write_all_nonblock(
+        &mut self,
+        mut write_buff: &[u8],
+        child_stderr_fd: &Option<RawFd>,
+    ) -> Result<(), io::Error> {
         loop {
             let written = self.write(&write_buff);
             match written {
                 Ok(0) => {
-                    return Err(io::Error::new(ErrorKind::WriteZero,
-                        "failed to write whole buffer"))
+                    return Err(io::Error::new(
+                        ErrorKind::WriteZero,
+                        "failed to write whole buffer",
+                    ))
                 }
                 Ok(n) => write_buff = &write_buff[n..],
-                Err(ref e) if e.kind() == ErrorKind::Interrupted ||
-                              e.kind() == ErrorKind::WouldBlock => {}
+                Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                    // Hold until non-blocking again
+                    let mut select_vec = vec![self.as_raw_fd()];
+                    if child_stderr_fd.is_some() {
+                        let real_child_stderr_fd = child_stderr_fd.unwrap();
+                        select_vec.push(real_child_stderr_fd);
+                    }
+                    match select_on_vec(select_vec) {
+                        Err(e) => {
+                            error!("Error during select on write: {}", e);
+                            return Err(io::Error::new(
+                                ErrorKind::WouldBlock,
+                                "Failed to select on handle",
+                            ));
+                        }
+                        Ok(_) => (),
+                    }
+                }
                 Err(e) => return Err(e),
             }
             if write_buff.is_empty() {
@@ -45,9 +70,11 @@ impl WriteAllNonBlock for UnixStream {
     }
 }
 
-pub fn run_unix_socket_loop(sockets: SocketConnection,
-                            listen_socket: UnixListener,
-                            mut client_handle: Child) {
+pub fn run_unix_socket_loop(
+    sockets: SocketConnection,
+    listen_socket: UnixListener,
+    mut client_handle: Child,
+) {
     // We need the stderr fd number from the child. Given that we wait()
     // on it here and takes a mut ref, we need to extract that fd now.
     // We add this to the select() fdset to ensure all threads get messaged
@@ -79,8 +106,14 @@ pub fn setup_listen_socket(sockets: &SocketConnection) -> Option<UnixListener> {
     }
 }
 
-fn accept_loop(sockets: SocketConnection, listen_socket: UnixListener, stderr_fd: Option<RawFd>) {
-    listen_socket.set_nonblocking(true).expect("Couldn't set accept loop to nonblocking.");
+fn accept_loop(
+    sockets: SocketConnection,
+    listen_socket: UnixListener,
+    stderr_fd: Option<RawFd>,
+) {
+    listen_socket
+        .set_nonblocking(true)
+        .expect("Couldn't set accept loop to nonblocking.");
 
     loop {
         match listen_socket.accept() {
@@ -109,7 +142,11 @@ fn accept_loop(sockets: SocketConnection, listen_socket: UnixListener, stderr_fd
     }
 }
 
-fn handle_client(sockets: &SocketConnection, client_stream: UnixStream, stderr_fd: Option<RawFd>) {
+fn handle_client(
+    sockets: &SocketConnection,
+    client_stream: UnixStream,
+    stderr_fd: Option<RawFd>,
+) {
     // Incoming connection from client, make our outgoing connection
     // to the original socket.
     let server_stream = match sockets.send_stream() {
@@ -120,14 +157,22 @@ fn handle_client(sockets: &SocketConnection, client_stream: UnixStream, stderr_f
         }
     };
 
-    thread::spawn(move || client_message_loop(client_stream, server_stream, stderr_fd));
+    thread::spawn(move || {
+        client_message_loop(client_stream, server_stream, stderr_fd)
+    });
 }
 
-fn client_message_loop(mut client_stream: UnixStream,
-                       mut server_stream: UnixStream,
-                       child_stderr_fd: Option<RawFd>) {
-    server_stream.set_nonblocking(true).expect("Couldn't set sockets to nonblocking");
-    client_stream.set_nonblocking(true).expect("Couldn't set sockets to nonblocking");
+fn client_message_loop(
+    mut client_stream: UnixStream,
+    mut server_stream: UnixStream,
+    child_stderr_fd: Option<RawFd>,
+) {
+    server_stream
+        .set_nonblocking(true)
+        .expect("Couldn't set sockets to nonblocking");
+    client_stream
+        .set_nonblocking(true)
+        .expect("Couldn't set sockets to nonblocking");
 
     // XXX: Some canonical way to avoid the useless init?
     let mut buffer: [u8; BUFFER_SIZE] = [0; BUFFER_SIZE];
@@ -145,7 +190,9 @@ fn client_message_loop(mut client_stream: UnixStream,
         if read > 0 {
             info!("C->S {} bytes", read);
             let write_buff = &buffer[0..read];
-            match server_stream.write_all_nonblock(&write_buff) {
+            match server_stream
+                .write_all_nonblock(&write_buff, &child_stderr_fd)
+            {
                 Ok(_) => (),
                 Err(e) => {
                     info!("Write error on socket: {}", e);
@@ -165,7 +212,9 @@ fn client_message_loop(mut client_stream: UnixStream,
         if read > 0 {
             info!("S->C {} bytes", read);
             let write_buff = &buffer[0..read];
-            match client_stream.write_all_nonblock(&write_buff) {
+            match client_stream
+                .write_all_nonblock(&write_buff, &child_stderr_fd)
+            {
                 Ok(_) => (),
                 Err(e) => {
                     info!("Write error on socket: {}", e);
@@ -174,7 +223,9 @@ fn client_message_loop(mut client_stream: UnixStream,
         }
 
         // Now just block here until anything shows up.
-        if let Err(e) = select_streams(&client_stream, &server_stream, &child_stderr_fd) {
+        if let Err(e) =
+            select_streams(&client_stream, &server_stream, &child_stderr_fd)
+        {
             error!("Error on select: {}", e);
             break;
         }
@@ -183,10 +234,11 @@ fn client_message_loop(mut client_stream: UnixStream,
     info!("Leaving client loop in thread.");
 }
 
-fn select_streams(client_stream: &UnixStream,
-                  server_stream: &UnixStream,
-                  child_stderr_fd: &Option<RawFd>)
-                  -> Result<(), nix::Error> {
+fn select_streams(
+    client_stream: &UnixStream,
+    server_stream: &UnixStream,
+    child_stderr_fd: &Option<RawFd>,
+) -> Result<(), nix::Error> {
     let client_stream_fd = client_stream.as_raw_fd();
     let server_stream_fd = server_stream.as_raw_fd();
     let mut fd_vec = vec![client_stream_fd as c_int, server_stream_fd as c_int];
@@ -207,24 +259,28 @@ fn select_on_vec(fdset_vec: Vec<c_int>) -> Result<(), nix::Error> {
         e_fdset.insert(fd.clone());
     }
     loop {
-        match select(None,
-                     Some(&mut r_fdset),
-                     Some(&mut w_fdset),
-                     Some(&mut e_fdset),
-                     None) {
-            Err(e) => {
-                match e {
-                    Sys(sysno) if sysno == Errno::EINTR => {
-                        continue;
-                    }
-                    Sys(_) | _ => {
-                        error!("Error on select: {}", e);
-                        return Err(e);
-                    }
+        match select(
+            None,
+            Some(&mut r_fdset),
+            Some(&mut w_fdset),
+            Some(&mut e_fdset),
+            None,
+        ) {
+            Err(e) => match e {
+                Sys(sysno) if sysno == Errno::EINTR => {
+                    continue;
                 }
-            }
+                Sys(_) | _ => {
+                    error!("Error on select: {}", e);
+                    return Err(e);
+                }
+            },
             Ok(count) => {
-                info!("Found {} awoken fds out of {}.", count, fdset_vec.len());
+                info!(
+                    "Found {} awoken fds out of {}.",
+                    count,
+                    3 * fdset_vec.len()
+                );
                 return Ok(());
             }
         }
