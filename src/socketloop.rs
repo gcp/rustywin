@@ -16,6 +16,12 @@ use nix::Error::Sys;
 
 const BUFFER_SIZE: usize = 1 << 16;
 
+enum SelectType {
+    Readers,
+    Writers,
+    ReadersAndWriters,
+}
+
 trait WriteAllNonBlock {
     /// Similar to write_all, but deals with WouldBlock
     fn write_all_nonblock(
@@ -49,7 +55,7 @@ impl WriteAllNonBlock for UnixStream {
                         let real_child_stderr_fd = child_stderr_fd.unwrap();
                         select_vec.push(real_child_stderr_fd);
                     }
-                    match select_on_vec(select_vec) {
+                    match select_on_vec(select_vec, SelectType::Writers) {
                         Err(e) => {
                             error!("Error during select on write: {}", e);
                             return Err(io::Error::new(
@@ -119,7 +125,7 @@ fn accept_loop(
         match listen_socket.accept() {
             Ok((stream, _)) => {
                 info!("Successfully accepted a client.");
-                handle_client(&sockets, stream, stderr_fd);
+                handle_client(&sockets, stream, stderr_fd.clone());
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => (),
             Err(_) => {
@@ -132,7 +138,7 @@ fn accept_loop(
         if stderr_fd.is_some() {
             select_vec.push(stderr_fd.unwrap());
         }
-        match select_on_vec(select_vec) {
+        match select_on_vec(select_vec, SelectType::ReadersAndWriters) {
             Err(e) => {
                 error!("Error during select on accept: {}", e);
                 return;
@@ -224,7 +230,8 @@ fn client_message_loop(
 
         // Now just block here until anything shows up.
         if let Err(e) =
-            select_streams(&client_stream, &server_stream, &child_stderr_fd)
+            select_streams(&client_stream, &server_stream, &child_stderr_fd,
+                           SelectType::Readers)
         {
             error!("Error on select: {}", e);
             break;
@@ -238,6 +245,7 @@ fn select_streams(
     client_stream: &UnixStream,
     server_stream: &UnixStream,
     child_stderr_fd: &Option<RawFd>,
+    socktype: SelectType
 ) -> Result<(), nix::Error> {
     let client_stream_fd = client_stream.as_raw_fd();
     let server_stream_fd = server_stream.as_raw_fd();
@@ -246,16 +254,29 @@ fn select_streams(
         let real_child_stderr_fd = child_stderr_fd.unwrap();
         fd_vec.push(real_child_stderr_fd);
     }
-    select_on_vec(fd_vec)
+    select_on_vec(fd_vec, socktype)
 }
 
-fn select_on_vec(fdset_vec: Vec<c_int>) -> Result<(), nix::Error> {
+fn select_on_vec(
+    fdset_vec: Vec<c_int>,
+    socktype: SelectType,
+) -> Result<(), nix::Error> {
     let mut r_fdset = FdSet::new();
     let mut w_fdset = FdSet::new();
     let mut e_fdset = FdSet::new();
     for fd in &fdset_vec {
-        r_fdset.insert(fd.clone());
-        w_fdset.insert(fd.clone());
+        match socktype {
+            SelectType::Readers => {
+                r_fdset.insert(fd.clone());
+            }
+            SelectType::Writers => {
+                w_fdset.insert(fd.clone());
+            }
+            SelectType::ReadersAndWriters => {
+                r_fdset.insert(fd.clone());
+                w_fdset.insert(fd.clone());
+            }
+        };
         e_fdset.insert(fd.clone());
     }
     loop {
