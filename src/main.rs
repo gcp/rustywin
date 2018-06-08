@@ -12,10 +12,11 @@ extern crate nix;
 
 mod client;
 mod display;
+mod ipc;
 mod socket;
 mod socketloop;
 
-use clap::{App, Arg};
+use clap::{App, AppSettings, Arg};
 use env_logger::{Builder, Env};
 use socketloop::ChildInfo;
 use std::env;
@@ -61,12 +62,15 @@ fn main() {
         .version(crate_version!())
         .about(env!("CARGO_PKG_DESCRIPTION"))
         .author(crate_authors!())
+        .setting(AppSettings::TrailingVarArg)
         .arg(
             Arg::with_name("fd")
                 .long("fd")
                 .help("Starts as server communicating on fd#")
                 .takes_value(true)
+                .number_of_values(1)
                 .required(true)
+                .display_order(1)
                 .conflicts_with("target"),
         )
         .arg(
@@ -81,8 +85,7 @@ fn main() {
                 .help("Arguments for the target program")
                 .index(2)
                 .multiple(true)
-                .requires("target")
-                .last(true),
+                .requires("target"),
         )
         .get_matches();
 
@@ -102,6 +105,10 @@ fn main() {
 
     let target = matches.value_of("target");
     let args = matches.values_of_lossy("target_args");
+    let fd = match matches.value_of("fd") {
+        Some(fd) => fd.parse::<i32>().ok(),
+        None => None,
+    };
 
     // Get the X11 display connection
     let key = "DISPLAY";
@@ -139,12 +146,17 @@ fn main() {
                 display_for_client.as_str(),
             ))
         } else {
-            assert!(matches.value_of("fd").is_some());
-            info!("Socket FD: {:?}", matches.value_of("fd").unwrap());
-            ChildInfo::RawFd(
-                matches.value_of("fd").unwrap().parse::<i32>().unwrap(),
-            )
+            assert!(fd.is_some());
+            info!("Socket FD: {:?}", fd.unwrap());
+            ChildInfo::RawFd(fd.unwrap())
         };
+
+        // We've been given an fd corresponding to a socketpair to
+        // communicate over. Send our X DISPLAY var.
+        if fd.is_some() {
+            ipc::send_display(fd.unwrap(), sockets.get_display())
+        }
+
         socketloop::run_unix_socket_loop(sockets, listen_socket, client_handle);
     }
 }
