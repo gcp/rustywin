@@ -3,6 +3,7 @@
 
 #[macro_use]
 extern crate log;
+#[macro_use]
 extern crate clap;
 extern crate env_logger;
 extern crate itertools;
@@ -16,6 +17,7 @@ mod socketloop;
 
 use clap::{App, Arg};
 use env_logger::{Builder, Env};
+use socketloop::ChildInfo;
 use std::env;
 
 /// Set up `env_logger` to log from Info and up.
@@ -56,18 +58,23 @@ fn main() {
         get_exe_name().expect("Couldn't parse current executable name");
 
     let matches = App::new("Rusty Windows")
-        .about("X Protocol Proxy")
+        .version(crate_version!())
+        .about(env!("CARGO_PKG_DESCRIPTION"))
+        .author(crate_authors!())
         .arg(
             Arg::with_name("fd")
                 .long("fd")
                 .help("Starts as server communicating on fd#")
                 .takes_value(true)
+                .required(true)
+                .conflicts_with("target"),
         )
         .arg(
             Arg::with_name("target")
                 .help("Launches the target program")
                 .index(1)
                 .required(true)
+                .conflicts_with("fd"),
         )
         .arg(
             Arg::with_name("target_args")
@@ -75,6 +82,7 @@ fn main() {
                 .index(2)
                 .multiple(true)
                 .requires("target")
+                .last(true),
         )
         .get_matches();
 
@@ -82,7 +90,8 @@ fn main() {
 
     if matches.is_present("target") {
         info!(
-            "Applying rustywin to \"{}\"",
+            "Applying {} to \"{}\"",
+            my_name,
             matches.value_of("target").unwrap()
         );
         if matches.is_present("target_args") {
@@ -91,7 +100,7 @@ fn main() {
         }
     }
 
-    let target = matches.value_of("target").unwrap();
+    let target = matches.value_of("target");
     let args = matches.values_of_lossy("target_args");
 
     // Get the X11 display connection
@@ -116,14 +125,26 @@ fn main() {
             Some(socket) => socket,
             None => std::process::exit(1),
         };
+
         // to_string() is needed here to break the lifetime link between
         // sockets and (eventually) client_handle.
         let display_for_client = sockets.get_display().to_string();
-        let client_handle = client::launch_client(
-            &target.to_string(),
-            &args,
-            display_for_client.as_str(),
-        );
+
+        // Now either get a handle to the child (from which we will extract
+        // standards fds) or the fd to listen to.
+        let client_handle: ChildInfo = if target.is_some() {
+            ChildInfo::Child(client::launch_client(
+                &target.unwrap().to_string(),
+                &args,
+                display_for_client.as_str(),
+            ))
+        } else {
+            assert!(matches.value_of("fd").is_some());
+            info!("Socket FD: {:?}", matches.value_of("fd").unwrap());
+            ChildInfo::RawFd(
+                matches.value_of("fd").unwrap().parse::<i32>().unwrap(),
+            )
+        };
         socketloop::run_unix_socket_loop(sockets, listen_socket, client_handle);
     }
 }

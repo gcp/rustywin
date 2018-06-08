@@ -22,6 +22,11 @@ enum SelectType {
     ReadersAndWriters,
 }
 
+pub enum ChildInfo {
+    Child(Child),
+    RawFd(RawFd),
+}
+
 trait WriteAllNonBlock {
     /// Similar to write_all, but deals with WouldBlock
     fn write_all_nonblock(
@@ -79,27 +84,48 @@ impl WriteAllNonBlock for UnixStream {
 pub fn run_unix_socket_loop(
     sockets: SocketConnection,
     listen_socket: UnixListener,
-    mut client_handle: Child,
+    client_handle: ChildInfo,
 ) {
-    // We need the stderr fd number from the child. Given that we wait()
-    // on it here and takes a mut ref, we need to extract that fd now.
-    // We add this to the select() fdset to ensure all threads get messaged
-    // on death. http://stackoverflow.com/a/8976461/909836
-    let child_stderr_fd = match client_handle.stderr {
-        Some(ref stderr) => {
-            info!("Got a handle for stderr, will monitor for exit.");
-            Some(stderr.as_raw_fd())
+    let child_fd = match client_handle {
+        ChildInfo::Child(ref child) => {
+            // We need the stderr fd number from the child. Given that we wait()
+            // on it here and takes a mut ref, we need to extract that fd now.
+            // We add this to the select() fdset to ensure all threads get messaged
+            // on death. http://stackoverflow.com/a/8976461/909836
+            match child.stderr {
+                Some(ref stderr) => {
+                    info!("Got a handle for stderr, will monitor for exit.");
+                    Some(stderr.as_raw_fd())
+                }
+                None => {
+                    info!("Couldn't obtain handle to child's stderr.");
+                    None
+                }
+            }
         }
-        None => {
-            info!("Couldn't obtain handle to child's stderr.");
-            None
-        }
+        ChildInfo::RawFd(rawfd) => Some(rawfd),
     };
 
-    thread::spawn(move || accept_loop(sockets, listen_socket, child_stderr_fd));
+    let thread =
+        thread::spawn(move || accept_loop(sockets, listen_socket, child_fd));
 
-    info!("Waiting for client to exit");
-    client_handle.wait().expect("Client exited abornomally");
+    match client_handle {
+        ChildInfo::Child(mut child) => {
+            info!("Waiting for client to exit");
+            child.wait().expect("Client exited abornomally");
+        }
+        ChildInfo::RawFd(_) => {
+            info!("Waiting for thread to exit");
+            match thread.join() {
+                Ok(_) => {
+                    info!("Thread exited normally.");
+                }
+                Err(e) => {
+                    error!("Error joining thread: {:?}", e);
+                }
+            }
+        }
+    }
 }
 
 pub fn setup_listen_socket(sockets: &SocketConnection) -> Option<UnixListener> {
@@ -229,10 +255,12 @@ fn client_message_loop(
         }
 
         // Now just block here until anything shows up.
-        if let Err(e) =
-            select_streams(&client_stream, &server_stream, &child_stderr_fd,
-                           SelectType::Readers)
-        {
+        if let Err(e) = select_streams(
+            &client_stream,
+            &server_stream,
+            &child_stderr_fd,
+            SelectType::Readers,
+        ) {
             error!("Error on select: {}", e);
             break;
         }
@@ -245,7 +273,7 @@ fn select_streams(
     client_stream: &UnixStream,
     server_stream: &UnixStream,
     child_stderr_fd: &Option<RawFd>,
-    socktype: SelectType
+    socktype: SelectType,
 ) -> Result<(), nix::Error> {
     let client_stream_fd = client_stream.as_raw_fd();
     let server_stream_fd = server_stream.as_raw_fd();

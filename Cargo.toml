@@ -4,6 +4,9 @@ version = "0.0.1"
 authors = ["Gian-Carlo Pascutto <gcp@sjeng.org>"]
 readme = "README.md"
 license = "MPL-2.0"
+description = "X Windows Protocol Security Proxy"
+homepage = "https://github.com/gcp/rustywin"
+repository = "https://github.com/gcp/rustywin.git"
 
 [dependencies]
 clippy = { version = "*", optional = true }
