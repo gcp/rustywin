@@ -1,26 +1,30 @@
-#![cfg_attr(feature="clippy", feature(plugin))]
-#![cfg_attr(feature="clippy", plugin(clippy))]
+#![cfg_attr(feature = "clippy", feature(plugin))]
+#![cfg_attr(feature = "clippy", plugin(clippy))]
 
 #[macro_use]
 extern crate log;
+extern crate clap;
 extern crate env_logger;
 extern crate itertools;
-extern crate nix;
 extern crate libc;
+extern crate nix;
 
+mod client;
 mod display;
 mod socket;
 mod socketloop;
-mod client;
 
-use std::io::prelude::*;
+use clap::{App, Arg};
+use env_logger::{Builder, Env};
 use std::env;
 
 /// Set up `env_logger` to log from Info and up.
 fn setup_logging() {
-    env_logger::Builder::from_default_env()
-        .default_format_timestamp(false)
-        .init();
+    let env = Env::default().filter_or("RUST_LOG", "info");
+
+    let mut builder = Builder::from_env(env);
+    builder.default_format_timestamp(false);
+    builder.init();
 }
 
 /// Return the name of our executable if possible.
@@ -48,21 +52,47 @@ fn get_exe_name() -> Option<String> {
 fn main() {
     setup_logging();
 
+    let my_name =
+        get_exe_name().expect("Couldn't parse current executable name");
+
+    let matches = App::new("Rusty Windows")
+        .about("X Protocol Proxy")
+        .arg(
+            Arg::with_name("fd")
+                .long("fd")
+                .help("Starts as server communicating on fd#")
+                .takes_value(true)
+        )
+        .arg(
+            Arg::with_name("target")
+                .help("Launches the target program")
+                .index(1)
+                .required(true)
+        )
+        .arg(
+            Arg::with_name("target_args")
+                .help("Arguments for the target program")
+                .index(2)
+                .multiple(true)
+                .requires("target")
+        )
+        .get_matches();
+
     info!("Rusty Windows - Starting up");
 
-    let my_name = get_exe_name().expect("Couldn't parse current executable name");
-
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        writeln!(std::io::stderr(),
-                 "Usage: {} <target program> <arguments>",
-                 my_name)
-            .unwrap();
-        std::process::exit(1);
-    } else {
-        assert!(args.len() >= 2);
-        info!("Applying rustywin to \"{}\"", &args[1]);
+    if matches.is_present("target") {
+        info!(
+            "Applying rustywin to \"{}\"",
+            matches.value_of("target").unwrap()
+        );
+        if matches.is_present("target_args") {
+            let arguments = matches.values_of_lossy("target_args").unwrap();
+            info!("Args: {:?}", arguments);
+        }
     }
+
+    let target = matches.value_of("target").unwrap();
+    let args = matches.values_of_lossy("target_args");
 
     // Get the X11 display connection
     let key = "DISPLAY";
@@ -89,8 +119,11 @@ fn main() {
         // to_string() is needed here to break the lifetime link between
         // sockets and (eventually) client_handle.
         let display_for_client = sockets.get_display().to_string();
-        let client_handle =
-            client::launch_client(args[1].as_str(), &args[2..], display_for_client.as_str());
+        let client_handle = client::launch_client(
+            &target.to_string(),
+            &args,
+            display_for_client.as_str(),
+        );
         socketloop::run_unix_socket_loop(sockets, listen_socket, client_handle);
     }
 }
