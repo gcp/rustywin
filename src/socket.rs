@@ -2,16 +2,16 @@ use std;
 use std::path::Path;
 
 use display::*;
-use std::os::unix::net::{UnixStream, UnixListener};
-use std::io::prelude::*;
-use std::io::{BufReader, BufWriter, Seek, SeekFrom, ErrorKind};
-use std::fs::{remove_file, OpenOptions};
-use std::os::unix::io::AsRawFd;
-use std::env;
-use nix::fcntl::{flock, FlockArg};
-use nix::unistd::getpid;
 use itertools::Itertools;
 use libc;
+use nix::fcntl::{flock, FlockArg};
+use nix::unistd::getpid;
+use std::env;
+use std::fs::{remove_file, OpenOptions};
+use std::io::prelude::*;
+use std::io::{BufReader, BufWriter, ErrorKind, Seek, SeekFrom};
+use std::os::unix::io::AsRawFd;
+use std::os::unix::net::{UnixListener, UnixStream};
 
 pub struct SocketConnection {
     client_display_name: String,
@@ -87,15 +87,17 @@ pub fn enumerate_unix_x11_sockets() -> Vec<usize> {
 pub fn cleanup_old_sockets() -> Result<(), std::io::Error> {
     let mut socket_list = env::home_dir().unwrap();
     socket_list.push(X11_SOCKET_LIST);
-    let mut file = OpenOptions::new().read(true)
+    let mut file = OpenOptions::new()
+        .read(true)
         .write(true)
         .create(true)
         .open(&socket_list)?;
     let fd = file.as_raw_fd();
     if let Err(e) = flock(fd, FlockArg::LockExclusive) {
-        warn!("Failed to create file lock on {:?} due to {}",
-              socket_list,
-              e);
+        warn!(
+            "Failed to create file lock on {:?} due to {}",
+            socket_list, e
+        );
     };
     // Record file contents as we go, we'll drop the lines
     // we're unlinking.
@@ -110,7 +112,8 @@ pub fn cleanup_old_sockets() -> Result<(), std::io::Error> {
                 Ok(line) => line,
                 Err(_) => break,
             };
-            let (pid, socket_path) = match line.split_whitespace().next_tuple() {
+            let (pid, socket_path) = match line.split_whitespace().next_tuple()
+            {
                 Some((x, y)) => (x, y),
                 _ => break,
             };
@@ -129,14 +132,23 @@ pub fn cleanup_old_sockets() -> Result<(), std::io::Error> {
             // reuses the pid.
             let res = unsafe { libc::kill(pid, 0) };
             if res != 0 {
-                info!("Process {} is dead, cleaning socket {}", pid, socket_path);
+                info!(
+                    "Process {} is dead, cleaning socket {}",
+                    pid, socket_path
+                );
                 if let Err(e) = remove_file(socket_path) {
                     if e.kind() != ErrorKind::NotFound {
-                        warn!("Failed to remove old socket {} due to: {}", socket_path, e);
+                        warn!(
+                            "Failed to remove old socket {} due to: {}",
+                            socket_path, e
+                        );
                         // Process no longer exists but couldn't remove socket
                         lines_not_cleaned.push(line.clone());
                     } else {
-                        info!("Socket {} already seems to be deleted.", socket_path);
+                        info!(
+                            "Socket {} already seems to be deleted.",
+                            socket_path
+                        );
                     }
                 }
             } else {
@@ -160,21 +172,25 @@ pub fn cleanup_old_sockets() -> Result<(), std::io::Error> {
 fn register_socket_for_cleanup(filename: &str) -> Result<(), std::io::Error> {
     let mut socket_list = env::home_dir().unwrap();
     socket_list.push(X11_SOCKET_LIST);
-    let file = OpenOptions::new().append(true)
+    let file = OpenOptions::new()
+        .append(true)
         .create(true)
         .open(&socket_list)?;
     let fd = file.as_raw_fd();
     if let Err(e) = flock(fd, FlockArg::LockExclusive) {
-        warn!("Failed to create file lock on {:?} due to: {}",
-              socket_list,
-              e);
+        warn!(
+            "Failed to create file lock on {:?} due to: {}",
+            socket_list, e
+        );
     };
     let mut writer = BufWriter::new(file);
     writeln!(writer, "{} {}", getpid(), filename)?;
     Ok(())
 }
 
-pub fn setup_unix_socket(x11_conn: &X11ConnectionDescriptor) -> SocketConnection {
+pub fn setup_unix_socket(
+    x11_conn: &X11ConnectionDescriptor,
+) -> SocketConnection {
     let original_server_num = x11_conn.server_num();
 
     if let Err(e) = cleanup_old_sockets() {
@@ -193,7 +209,8 @@ pub fn setup_unix_socket(x11_conn: &X11ConnectionDescriptor) -> SocketConnection
     };
     info!("Next available X11 server: #{}", free_server_num);
 
-    let new_unix_socket_name = format!("{}{}{}", X11_SOCKET_DIR, 'X', free_server_num);
+    let new_unix_socket_name =
+        format!("{}{}{}", X11_SOCKET_DIR, 'X', free_server_num);
     info!("Creating socket at {}", new_unix_socket_name);
 
     // XXX: We need to recover any old sockets of ours here when we start up,
@@ -208,10 +225,11 @@ pub fn setup_unix_socket(x11_conn: &X11ConnectionDescriptor) -> SocketConnection
     let client_display_name = format!(":{}", free_server_num);
 
     // construct path for original X11 socket
-    let target_unix_socket_name = format!("{}{}{}", X11_SOCKET_DIR, 'X', original_server_num);
+    let target_unix_socket_name =
+        format!("{}{}{}", X11_SOCKET_DIR, 'X', original_server_num);
 
     SocketConnection {
-        client_display_name: client_display_name,
+        client_display_name,
         client_socket_name: new_unix_socket_name,
         server_socket_name: target_unix_socket_name,
     }

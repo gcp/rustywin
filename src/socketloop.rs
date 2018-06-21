@@ -16,6 +16,7 @@ use nix::Error::Sys;
 
 const BUFFER_SIZE: usize = 1 << 16;
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 enum SelectType {
     Readers,
     Writers,
@@ -60,15 +61,14 @@ impl WriteAllNonBlock for UnixStream {
                         let real_child_stderr_fd = child_stderr_fd.unwrap();
                         select_vec.push(real_child_stderr_fd);
                     }
-                    match select_on_vec(select_vec, SelectType::Writers) {
-                        Err(e) => {
-                            error!("Error during select on write: {}", e);
-                            return Err(io::Error::new(
-                                ErrorKind::WouldBlock,
-                                "Failed to select on handle",
-                            ));
-                        }
-                        Ok(_) => (),
+                    if let Err(e) =
+                        select_on_vec(&select_vec, SelectType::Writers)
+                    {
+                        error!("Error during select on write: {}", e);
+                        return Err(io::Error::new(
+                            ErrorKind::WouldBlock,
+                            "Failed to select on handle",
+                        ));
                     }
                 }
                 Err(e) => return Err(e),
@@ -107,7 +107,7 @@ pub fn run_unix_socket_loop(
     };
 
     let thread =
-        thread::spawn(move || accept_loop(sockets, listen_socket, child_fd));
+        thread::spawn(move || accept_loop(&sockets, &listen_socket, child_fd));
 
     match client_handle {
         ChildInfo::Child(mut child) => {
@@ -139,8 +139,8 @@ pub fn setup_listen_socket(sockets: &SocketConnection) -> Option<UnixListener> {
 }
 
 fn accept_loop(
-    sockets: SocketConnection,
-    listen_socket: UnixListener,
+    sockets: &SocketConnection,
+    listen_socket: &UnixListener,
     stderr_fd: Option<RawFd>,
 ) {
     listen_socket
@@ -151,7 +151,7 @@ fn accept_loop(
         match listen_socket.accept() {
             Ok((stream, _)) => {
                 info!("Successfully accepted a client.");
-                handle_client(&sockets, stream, stderr_fd.clone());
+                handle_client(&sockets, stream, stderr_fd);
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => (),
             Err(_) => {
@@ -164,12 +164,11 @@ fn accept_loop(
         if stderr_fd.is_some() {
             select_vec.push(stderr_fd.unwrap());
         }
-        match select_on_vec(select_vec, SelectType::ReadersAndWriters) {
-            Err(e) => {
-                error!("Error during select on accept: {}", e);
-                return;
-            }
-            Ok(_) => (),
+        if let Err(e) =
+            select_on_vec(&select_vec, SelectType::ReadersAndWriters)
+        {
+            error!("Error during select on accept: {}", e);
+            return;
         }
     }
 }
@@ -258,7 +257,7 @@ fn client_message_loop(
         if let Err(e) = select_streams(
             &client_stream,
             &server_stream,
-            &child_stderr_fd,
+            child_stderr_fd,
             SelectType::Readers,
         ) {
             error!("Error on select: {}", e);
@@ -272,7 +271,7 @@ fn client_message_loop(
 fn select_streams(
     client_stream: &UnixStream,
     server_stream: &UnixStream,
-    child_stderr_fd: &Option<RawFd>,
+    child_stderr_fd: Option<RawFd>,
     socktype: SelectType,
 ) -> Result<(), nix::Error> {
     let client_stream_fd = client_stream.as_raw_fd();
@@ -282,17 +281,17 @@ fn select_streams(
         let real_child_stderr_fd = child_stderr_fd.unwrap();
         fd_vec.push(real_child_stderr_fd);
     }
-    select_on_vec(fd_vec, socktype)
+    select_on_vec(&fd_vec, socktype)
 }
 
 fn select_on_vec(
-    fdset_vec: Vec<c_int>,
+    fdset_vec: &[c_int],
     socktype: SelectType,
 ) -> Result<(), nix::Error> {
     let mut r_fdset = FdSet::new();
     let mut w_fdset = FdSet::new();
     let mut e_fdset = FdSet::new();
-    for fd in &fdset_vec {
+    for fd in fdset_vec {
         match socktype {
             SelectType::Readers => {
                 r_fdset.insert(fd.clone());

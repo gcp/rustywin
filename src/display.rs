@@ -48,7 +48,7 @@ pub fn parse_x11_display(display: &str) -> X11ConnectionDescriptor {
     let host_idx = remainder.find(':');
     let host = match host_idx {
         Some(idx) => &remainder[0..idx],
-        None => panic!("Couldn't parse DISPLAY string."),  // We should find at least one :
+        None => panic!("Couldn't parse DISPLAY string."), // We should find at least one :
     };
     info!("Host: {}", host);
 
@@ -80,7 +80,7 @@ pub fn parse_x11_display(display: &str) -> X11ConnectionDescriptor {
     };
 
     X11ConnectionDescriptor {
-        connection_type: connection_type,
+        connection_type,
         host_name: if host.is_empty() {
             None
         } else {
