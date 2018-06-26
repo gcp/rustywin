@@ -65,6 +65,7 @@ fn main() {
         .setting(AppSettings::TrailingVarArg)
         .arg(
             Arg::with_name("fd")
+                .short("f")
                 .long("fd")
                 .help("Starts as server communicating on fd#")
                 .takes_value(true)

@@ -324,11 +324,11 @@ fn select_on_vec(
                 }
             },
             Ok(count) => {
-                info!(
-                    "Found {} awoken fds out of {}.",
-                    count,
-                    3 * fdset_vec.len()
-                );
+                //info!(
+                //    "Found {} awoken fds out of {}.",
+                //    count,
+                //    3 * fdset_vec.len()
+                //);
                 return Ok(());
             }
         }
