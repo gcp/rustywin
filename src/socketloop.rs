@@ -8,11 +8,16 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::Child;
 use std::thread;
 
+use std::sync::Arc;
+use std::sync::Mutex;
+
 use nix;
 use nix::errno::Errno;
 use nix::libc::c_int;
 use nix::sys::select::{select, FdSet};
 use nix::Error::Sys;
+
+use ipc;
 
 const BUFFER_SIZE: usize = 1 << 16;
 
@@ -141,17 +146,26 @@ pub fn setup_listen_socket(sockets: &SocketConnection) -> Option<UnixListener> {
 fn accept_loop(
     sockets: &SocketConnection,
     listen_socket: &UnixListener,
-    stderr_fd: Option<RawFd>,
+    // This is either the stderr fd (for termination)
+    // or the socketpair fd (also for comms).
+    child_fd: Option<RawFd>,
 ) {
     listen_socket
         .set_nonblocking(true)
         .expect("Couldn't set accept loop to nonblocking.");
 
+    let child_pid_vec = Arc::new(Mutex::new(Vec::new()));
+
     loop {
+        // Check whether the master process is sending us
+        // some information.
+        ipc::try_receive_pids(child_fd, &mut child_pid_vec.lock().unwrap());
+
+        // Check whether a new client is connected
         match listen_socket.accept() {
             Ok((stream, _)) => {
                 info!("Successfully accepted a client.");
-                handle_client(&sockets, stream, stderr_fd);
+                handle_client(&sockets, stream, child_fd);
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => (),
             Err(_) => {
@@ -161,8 +175,8 @@ fn accept_loop(
         };
 
         let mut select_vec = vec![listen_socket.as_raw_fd()];
-        if stderr_fd.is_some() {
-            select_vec.push(stderr_fd.unwrap());
+        if child_fd.is_some() {
+            select_vec.push(child_fd.unwrap());
         }
         if let Err(e) =
             select_on_vec(&select_vec, SelectType::ReadersAndWriters)
