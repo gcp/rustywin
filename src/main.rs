@@ -140,7 +140,7 @@ fn main() {
 
         // Now either get a handle to the child (from which we will extract
         // standards fds) or the fd to listen to.
-        let client_handle: ChildInfo = if target.is_some() {
+        let client_handle = if target.is_some() {
             ChildInfo::Child(client::launch_client(
                 &target.unwrap().to_string(),
                 &args,
