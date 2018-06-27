@@ -29,6 +29,10 @@ fn process_pid_message(cmd: u8, pid: u32, pids: &mut Vec<u32>) {
             info!("Already contains PID {}, PIDS={:?}", pid, pids);
         }
     } else if cmd == 1 {
+        if !pids.contains(&pid) {
+            error!("Trying to harden a PID that wasn't started: {}", pid);
+            return;
+        }
         pids.retain(|&x| x != pid);
         info!("Removed PID {}, PIDS={:?}", pid, pids);
     }
