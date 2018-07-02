@@ -15,6 +15,7 @@ use nix;
 use nix::errno::Errno;
 use nix::libc::c_int;
 use nix::sys::select::{select, FdSet};
+use nix::sys::socket::{getsockopt, sockopt};
 use nix::Error::Sys;
 
 use ipc;
@@ -32,6 +33,8 @@ pub enum ChildInfo {
     Child(Child),
     RawFd(RawFd),
 }
+
+type PidVector = Arc<Mutex<Vec<i32>>>;
 
 trait WriteAllNonBlock {
     /// Similar to write_all, but deals with WouldBlock
@@ -154,7 +157,7 @@ fn accept_loop(
         .set_nonblocking(true)
         .expect("Couldn't set accept loop to nonblocking.");
 
-    let child_pid_vec = Arc::new(Mutex::new(Vec::new()));
+    let child_pid_vec = PidVector::new(Mutex::new(Vec::new()));
 
     loop {
         // Check whether the master process is sending us
@@ -165,7 +168,12 @@ fn accept_loop(
         match listen_socket.accept() {
             Ok((stream, _)) => {
                 info!("Successfully accepted a client.");
-                handle_client(&sockets, stream, child_fd);
+                handle_client(
+                    &sockets,
+                    stream,
+                    child_fd,
+                    child_pid_vec.clone(),
+                );
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => (),
             Err(_) => {
@@ -191,6 +199,7 @@ fn handle_client(
     sockets: &SocketConnection,
     client_stream: UnixStream,
     stderr_fd: Option<RawFd>,
+    pid_vector: PidVector,
 ) {
     // Incoming connection from client, make our outgoing connection
     // to the original socket.
@@ -203,7 +212,7 @@ fn handle_client(
     };
 
     thread::spawn(move || {
-        client_message_loop(client_stream, server_stream, stderr_fd)
+        client_message_loop(client_stream, server_stream, stderr_fd, pid_vector)
     });
 }
 
@@ -211,6 +220,7 @@ fn client_message_loop(
     mut client_stream: UnixStream,
     mut server_stream: UnixStream,
     child_stderr_fd: Option<RawFd>,
+    pid_vector: PidVector,
 ) {
     server_stream
         .set_nonblocking(true)
@@ -218,6 +228,13 @@ fn client_message_loop(
     client_stream
         .set_nonblocking(true)
         .expect("Couldn't set sockets to nonblocking");
+
+    // Find the PID of our peer
+    let client_fd = client_stream.as_raw_fd();
+    let creds = sockopt::PeerCredentials;
+    let creds_result = getsockopt(client_fd, creds);
+    let client_pid = creds_result.unwrap().pid();
+    info!("Client PID is detected as: {}", client_pid);
 
     // XXX: Some canonical way to avoid the useless init?
     let mut buffer: [u8; BUFFER_SIZE] = [0; BUFFER_SIZE];
@@ -234,14 +251,18 @@ fn client_message_loop(
 
         if read > 0 {
             info!("C->S {} bytes", read);
-            let write_buff = &buffer[0..read];
-            match server_stream
-                .write_all_nonblock(&write_buff, &child_stderr_fd)
-            {
-                Ok(_) => (),
-                Err(e) => {
-                    info!("Write error on socket: {}", e);
+            if pid_vector.lock().unwrap().contains(&client_pid) {
+                let write_buff = &buffer[0..read];
+                match server_stream
+                    .write_all_nonblock(&write_buff, &child_stderr_fd)
+                {
+                    Ok(_) => (),
+                    Err(e) => {
+                        info!("Write error on socket: {}", e);
+                    }
                 }
+            } else {
+                info!("Blocking client-server read after harden.");
             }
         }
 

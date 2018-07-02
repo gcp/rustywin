@@ -20,7 +20,7 @@ pub fn send_display(fd: RawFd, display: &str) {
     info!("Display string sent: {:?}", display);
 }
 
-fn process_pid_message(cmd: u8, pid: u32, pids: &mut Vec<u32>) {
+fn process_pid_message(cmd: u8, pid: i32, pids: &mut Vec<i32>) {
     if cmd == 0 {
         if !pids.contains(&pid) {
             pids.push(pid);
@@ -38,7 +38,7 @@ fn process_pid_message(cmd: u8, pid: u32, pids: &mut Vec<u32>) {
     }
 }
 
-pub fn try_receive_pids(fd: Option<RawFd>, pids: &mut Vec<u32>) {
+pub fn try_receive_pids(fd: Option<RawFd>, pids: &mut Vec<i32>) {
     if fd.is_none() {
         return;
     }
@@ -60,7 +60,7 @@ pub fn try_receive_pids(fd: Option<RawFd>, pids: &mut Vec<u32>) {
                 panic!("Unexpected message length: {}", n);
             }
             let cmd = buffer[0];
-            let pid = NativeEndian::read_u32(&buffer[1..5]);
+            let pid = NativeEndian::read_i32(&buffer[1..5]);
             process_pid_message(cmd, pid, pids);
         }
         Err(e) => {
