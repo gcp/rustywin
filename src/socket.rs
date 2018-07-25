@@ -1,12 +1,12 @@
 use std;
 use std::path::Path;
 
+use dirs;
 use display::*;
 use itertools::Itertools;
 use libc;
 use nix::fcntl::{flock, FlockArg};
 use nix::unistd::getpid;
-use std::env;
 use std::fs::{remove_file, OpenOptions};
 use std::io::prelude::*;
 use std::io::{BufReader, BufWriter, ErrorKind, Seek, SeekFrom};
@@ -85,7 +85,7 @@ pub fn enumerate_unix_x11_sockets() -> Vec<usize> {
 }
 
 pub fn cleanup_old_sockets() -> Result<(), std::io::Error> {
-    let mut socket_list = env::home_dir().unwrap();
+    let mut socket_list = dirs::home_dir().unwrap();
     socket_list.push(X11_SOCKET_LIST);
     let mut file = OpenOptions::new()
         .read(true)
@@ -170,7 +170,7 @@ pub fn cleanup_old_sockets() -> Result<(), std::io::Error> {
 }
 
 fn register_socket_for_cleanup(filename: &str) -> Result<(), std::io::Error> {
-    let mut socket_list = env::home_dir().unwrap();
+    let mut socket_list = dirs::home_dir().unwrap();
     socket_list.push(X11_SOCKET_LIST);
     let file = OpenOptions::new()
         .append(true)

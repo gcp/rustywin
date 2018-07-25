@@ -16,6 +16,7 @@ nix = "0.11"
 libc = "0.2"
 itertools = "0.7"
 byteorder = "1.2"
+dirs = "1.0"
 
 [dependencies.clap]
 version = "2.31.2"
@@ -23,3 +24,6 @@ default-features = false
 
 [features]
 default = []
+
+[[bin]]
+name = "rustywin"

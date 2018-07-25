@@ -6,6 +6,7 @@ extern crate log;
 #[macro_use]
 extern crate clap;
 extern crate byteorder;
+extern crate dirs;
 extern crate env_logger;
 extern crate itertools;
 extern crate libc;
