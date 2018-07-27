@@ -22,6 +22,11 @@ use clap::{App, AppSettings, Arg};
 use env_logger::{Builder, Env};
 use socketloop::ChildInfo;
 use std::env;
+use std::fs::OpenOptions;
+use std::sync::Arc;
+use std::sync::Mutex;
+
+pub type DumpFile = Arc<Mutex<std::io::Write + Send>>;
 
 /// Set up `env_logger` to log from Info and up.
 fn setup_logging() {
@@ -65,6 +70,13 @@ fn main() {
         .about(env!("CARGO_PKG_DESCRIPTION"))
         .author(crate_authors!())
         .setting(AppSettings::TrailingVarArg)
+        .arg(
+            Arg::with_name("dumpfile")
+                .long("dump")
+                .help("Dump client to server traffic to file")
+                .takes_value(true)
+                .number_of_values(1),
+        )
         .arg(
             Arg::with_name("fd")
                 .short("f")
@@ -110,6 +122,20 @@ fn main() {
     let args = matches.values_of_lossy("target_args");
     let fd = match matches.value_of("fd") {
         Some(fd) => fd.parse::<i32>().ok(),
+        None => None,
+    };
+
+    // Open the dumpfile if we got one
+    let dumpfile = match matches.value_of("dumpfile") {
+        Some(filename) => {
+            info!("Dumping to {}", filename);
+            let dumpfile = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(filename)
+                .expect("Error opening dumpfile");
+            Some(Arc::new(Mutex::new(dumpfile)) as DumpFile)
+        }
         None => None,
     };
 
@@ -160,6 +186,11 @@ fn main() {
             ipc::send_display(fd.unwrap(), sockets.get_display())
         }
 
-        socketloop::run_unix_socket_loop(sockets, listen_socket, client_handle);
+        socketloop::run_unix_socket_loop(
+            sockets,
+            listen_socket,
+            client_handle,
+            dumpfile,
+        );
     }
 }

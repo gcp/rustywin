@@ -19,6 +19,7 @@ use nix::sys::socket::{getsockopt, sockopt};
 use nix::Error::Sys;
 
 use ipc;
+use DumpFile;
 
 const BUFFER_SIZE: usize = 1 << 16;
 
@@ -93,6 +94,7 @@ pub fn run_unix_socket_loop(
     sockets: SocketConnection,
     listen_socket: UnixListener,
     client_handle: ChildInfo,
+    dumpfile: Option<DumpFile>,
 ) {
     let child_fd = match client_handle {
         ChildInfo::Child(ref child) => {
@@ -114,8 +116,9 @@ pub fn run_unix_socket_loop(
         ChildInfo::RawFd(rawfd) => Some(rawfd),
     };
 
-    let thread =
-        thread::spawn(move || accept_loop(&sockets, &listen_socket, child_fd));
+    let thread = thread::spawn(move || {
+        accept_loop(&sockets, &listen_socket, child_fd, &dumpfile)
+    });
 
     match client_handle {
         ChildInfo::Child(mut child) => {
@@ -152,6 +155,7 @@ fn accept_loop(
     // This is either the stderr fd (for termination)
     // or the socketpair fd (also for comms).
     child_fd: Option<RawFd>,
+    dumpfile: &Option<DumpFile>,
 ) {
     listen_socket
         .set_nonblocking(true)
@@ -160,6 +164,8 @@ fn accept_loop(
     let child_pid_vec = PidVector::new(Mutex::new(Vec::new()));
 
     loop {
+        // XXX: This will break if we are working on standalone mode,
+        // need to differentiate this use of child_fd.
         // Check whether the master process is sending us
         // some information.
         ipc::try_receive_pids(child_fd, &mut child_pid_vec.lock().unwrap());
@@ -168,11 +174,13 @@ fn accept_loop(
         match listen_socket.accept() {
             Ok((stream, _)) => {
                 info!("Successfully accepted a client.");
+
                 handle_client(
                     &sockets,
                     stream,
                     child_fd,
                     child_pid_vec.clone(),
+                    dumpfile.clone(),
                 );
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => (),
@@ -200,6 +208,7 @@ fn handle_client(
     client_stream: UnixStream,
     stderr_fd: Option<RawFd>,
     pid_vector: PidVector,
+    dumpfile: Option<DumpFile>,
 ) {
     // Incoming connection from client, make our outgoing connection
     // to the original socket.
@@ -212,7 +221,13 @@ fn handle_client(
     };
 
     thread::spawn(move || {
-        client_message_loop(client_stream, server_stream, stderr_fd, pid_vector)
+        client_message_loop(
+            client_stream,
+            server_stream,
+            stderr_fd,
+            pid_vector,
+            dumpfile,
+        )
     });
 }
 
@@ -221,6 +236,7 @@ fn client_message_loop(
     mut server_stream: UnixStream,
     child_stderr_fd: Option<RawFd>,
     pid_vector: PidVector,
+    dumpfile: Option<DumpFile>,
 ) {
     server_stream
         .set_nonblocking(true)
@@ -251,8 +267,8 @@ fn client_message_loop(
 
         if read > 0 {
             info!("C->S {} bytes", read);
+            let write_buff = &buffer[0..read];
             if pid_vector.lock().unwrap().contains(&client_pid) {
-                let write_buff = &buffer[0..read];
                 match server_stream
                     .write_all_nonblock(&write_buff, &child_stderr_fd)
                 {
@@ -262,7 +278,16 @@ fn client_message_loop(
                     }
                 }
             } else {
-                info!("Blocking client-server read after harden.");
+                info!("Blocking client-server write after harden.");
+                // Log what we would have blocked in the dumpfile
+                if let Some(ref dump) = dumpfile {
+                    match dump.lock().unwrap().write(write_buff) {
+                        Ok(_) => (),
+                        Err(e) => {
+                            error!("Could not write dumpfile: {}", e);
+                        }
+                    }
+                }
             }
         }
 
@@ -358,7 +383,7 @@ fn select_on_vec(
                     return Err(e);
                 }
             },
-            Ok(count) => {
+            Ok(_count) => {
                 //info!(
                 //    "Found {} awoken fds out of {}.",
                 //    count,
