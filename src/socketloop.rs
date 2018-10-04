@@ -247,10 +247,16 @@ fn client_message_loop(
 
     // Find the PID of our peer
     let client_fd = client_stream.as_raw_fd();
-    let creds = sockopt::PeerCredentials;
-    let creds_result = getsockopt(client_fd, creds);
-    let client_pid = creds_result.unwrap().pid();
-    info!("Client PID is detected as: {}", client_pid);
+
+    // This is only supported on non-ARM Linux in nix
+    let mut client_pid = 0;
+    #[cfg(all(target_os = "linux", not(target_arch = "arm")))]
+    {
+        let creds = sockopt::PeerCredentials;
+        let creds_result = getsockopt(client_fd, creds);
+        client_pid = creds_result.unwrap().pid();
+        info!("Client PID is detected as: {}", client_pid);
+    }
 
     // XXX: Some canonical way to avoid the useless init?
     let mut buffer: [u8; BUFFER_SIZE] = [0; BUFFER_SIZE];
