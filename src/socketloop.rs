@@ -98,10 +98,12 @@ pub fn run_unix_socket_loop(
 ) {
     let child_fd = match client_handle {
         ChildInfo::Child(ref child) => {
-            // We need the stderr fd number from the child. Given that we wait()
-            // on it here and takes a mut ref, we need to extract that fd now.
-            // We add this to the select() fdset to ensure all threads get messaged
-            // on death. http://stackoverflow.com/a/8976461/909836
+            // We need the stderr fd number from the child.
+            // Given that we wait() on it here and takes a mut ref,
+            // we need to extract that fd now.
+            // We add this to the select() fdset to ensure all threads get
+            // messaged on death.
+            // http://stackoverflow.com/a/8976461/909836
             match child.stderr {
                 Some(ref stderr) => {
                     info!("Got a handle for stderr, will monitor for exit.");
@@ -249,13 +251,14 @@ fn client_message_loop(
     let client_fd = client_stream.as_raw_fd();
 
     // This is only supported on non-ARM Linux in nix
-    let mut client_pid = 0;
-    #[cfg(all(target_os = "linux", not(target_arch = "arm")))]
-    {
+    let client_pid;
+    if cfg!(all(target_os = "linux", not(target_arch = "arm"))) {
         let creds = sockopt::PeerCredentials;
         let creds_result = getsockopt(client_fd, creds);
         client_pid = creds_result.unwrap().pid();
         info!("Client PID is detected as: {}", client_pid);
+    } else {
+        client_pid = 0;
     }
 
     // XXX: Some canonical way to avoid the useless init?
