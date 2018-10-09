@@ -22,6 +22,10 @@ dirs = "1.0"
 version = "2.32.0"
 default-features = false
 
+[dependencies.nom]
+version = "4"
+features = ["verbose-errors"]
+
 [features]
 default = []
 

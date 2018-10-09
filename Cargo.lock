@@ -255,6 +255,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nom"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "memchr 2.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -358,6 +366,7 @@ dependencies = [
  "libc 0.2.42 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "nix 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "nom 4.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -567,6 +576,7 @@ dependencies = [
 "checksum matches 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)" = "835511bab37c34c47da5cb44844bea2cfde0236db0b506f90ea4224482c9774a"
 "checksum memchr 2.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "796fba70e76612589ed2ce7f45282f5af869e0fdd7cc6199fa1aa1f1d591ba9d"
 "checksum nix 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)" = "d37e713a259ff641624b6cb20e3b12b2952313ba36b6823c0f16e6cfd9e5de17"
+"checksum nom 4.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "50b5469365a145d6c39ca7eff1a3048465206268c3f46617bb40c7752397be07"
 "checksum num-traits 0.2.5 (registry+https://github.com/rust-lang/crates.io-index)" = "630de1ef5cc79d0cdd78b7e33b81f083cbfe90de0f4b2b2f07f905867c70e9fe"
 "checksum percent-encoding 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "31010dd2e1ac33d5b46a5b413495239882813e0369f8ed8a5e266f173602f831"
 "checksum proc-macro2 0.4.9 (registry+https://github.com/rust-lang/crates.io-index)" = "cccdc7557a98fe98453030f077df7f3a042052fae465bb61d2c2c41435cfd9b6"

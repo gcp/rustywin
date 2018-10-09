@@ -5,6 +5,8 @@
 extern crate log;
 #[macro_use]
 extern crate clap;
+#[macro_use]
+extern crate nom;
 extern crate byteorder;
 extern crate dirs;
 extern crate env_logger;
@@ -12,6 +14,7 @@ extern crate itertools;
 extern crate libc;
 extern crate nix;
 
+mod analyze;
 mod client;
 mod display;
 mod ipc;
@@ -73,31 +76,44 @@ fn main() {
         .arg(
             Arg::with_name("dumpfile")
                 .long("dump")
-                .help("Dump client to server traffic to file")
+                .help("Dump client to server traffic to file.")
                 .takes_value(true)
                 .number_of_values(1),
+        )
+        .arg(
+            Arg::with_name("analyze_file")
+                .long("analyze")
+                .help("File of dumped traffic to analyze.")
+                .takes_value(true)
+                .number_of_values(1)
+                .required(true)
+                .conflicts_with("dumpfile")
+                .conflicts_with("fd")
+                .conflicts_with("target"),
         )
         .arg(
             Arg::with_name("fd")
                 .short("f")
                 .long("fd")
-                .help("Starts as server communicating on fd#")
+                .help("Starts as server communicating on fd#.")
                 .takes_value(true)
                 .number_of_values(1)
                 .required(true)
                 .display_order(1)
-                .conflicts_with("target"),
+                .conflicts_with("target")
+                .conflicts_with("analyze_file"),
         )
         .arg(
             Arg::with_name("target")
-                .help("Launches the target program")
+                .help("Launches the target program.")
                 .index(1)
                 .required(true)
-                .conflicts_with("fd"),
+                .conflicts_with("fd")
+                .conflicts_with("analyze_file"),
         )
         .arg(
             Arg::with_name("target_args")
-                .help("Arguments for the target program")
+                .help("Arguments for the target program.")
                 .index(2)
                 .multiple(true)
                 .requires("target"),
@@ -105,6 +121,14 @@ fn main() {
         .get_matches();
 
     info!("Rusty Windows - Starting up");
+
+    // If we're just analzying an existing dump,
+    // ignore all other options.
+    if matches.is_present("analyze_file") {
+        let filename = matches.value_of("analyze_file").unwrap();
+        info!("Analzying dumpfile {}", filename);
+        analyze::analyze_file(filename);
+    }
 
     if matches.is_present("target") {
         info!(
