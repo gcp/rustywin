@@ -16,7 +16,8 @@ nix = "0.11"
 libc = "0.2"
 itertools = "0.7"
 byteorder = "1.2"
-dirs = "1.0"
+dirs = "1"
+quick-error = "1"
 
 [dependencies.clap]
 version = "2.32.0"

@@ -7,6 +7,8 @@ extern crate log;
 extern crate clap;
 #[macro_use]
 extern crate nom;
+#[macro_use]
+extern crate quick_error;
 extern crate byteorder;
 extern crate dirs;
 extern crate env_logger;
@@ -127,7 +129,8 @@ fn main() {
     if matches.is_present("analyze_file") {
         let filename = matches.value_of("analyze_file").unwrap();
         info!("Analzying dumpfile {}", filename);
-        analyze::analyze_file(filename);
+        let res = analyze::analyze_file(filename);
+        std::process::exit(if res.is_err() { 1 } else { 0 });
     }
 
     if matches.is_present("target") {
