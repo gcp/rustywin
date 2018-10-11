@@ -9,6 +9,8 @@ extern crate clap;
 extern crate nom;
 #[macro_use]
 extern crate quick_error;
+#[macro_use]
+extern crate enum_primitive;
 extern crate byteorder;
 extern crate dirs;
 extern crate env_logger;
