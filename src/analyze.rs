@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::prelude::*;
 
 use enum_primitive::FromPrimitive;
-use nom::{le_f64, le_i16, le_u16, le_u24, le_u32, le_u8, IResult, Needed};
+use nom::{le_i16, le_u16, le_u24, le_u32, le_u8, IResult, Needed};
 
 quick_error! {
     #[derive(Debug)]
@@ -55,7 +55,7 @@ enum Opcode {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct InternAtom<'a> {
-    only_if_exists: u8,
+    only_if_exists: bool,
     name_length: u16,
     name: Cow<'a, str>,
 }
@@ -124,13 +124,13 @@ named!(
 named!(intern_atom<&[u8], InternAtom>,
     do_parse!(
         _opcode: le_u8
-        >> if_exists: le_u8
+        >> only_if_exists: le_u8
         >> _length: le_u16
         >> name_length: le_u16
         >> _pad: le_u16
         >> name: take!(name_length)
         >> ( InternAtom {
-            only_if_exists: if_exists,
+            only_if_exists: only_if_exists == 1,
             name_length: name_length,
             name: String::from_utf8_lossy(name)
         })
@@ -192,4 +192,38 @@ fn analyze_buffer(mut buffer: &[u8]) -> ParseResult {
     }
 
     Ok(Outcome::Allowed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    const D_INTERNATOM: &'static [u8] = include_bytes!("../dumps/blocked.dmp");
+
+    #[test]
+    fn test_request() {
+        let req = request(D_INTERNATOM);
+        let req_header = req.unwrap().1;
+        assert_eq!(
+            req_header,
+            Request {
+                opcode: 16,
+                datab: 0,
+                length: 32,
+                data: &[
+                    21, 0, 64, 7, 95, 71, 84, 75, 95, 69, 68, 71, 69, 95, 67,
+                    79, 78, 83, 84, 82, 65, 73, 78, 84, 83, 47, 109, 111
+                ]
+            }
+        );
+        let ia = intern_atom(D_INTERNATOM);
+        let ia = ia.unwrap().1;
+        assert_eq!(
+            ia,
+            InternAtom {
+                only_if_exists: false,
+                name_length: 21,
+                name: std::borrow::Cow::from("_GTK_EDGE_CONSTRAINTS"),
+            },
+        );
+    }
 }
