@@ -1,7 +1,7 @@
+use std::borrow::Cow;
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::prelude::*;
-use std::str::from_utf8;
 
 use enum_primitive::FromPrimitive;
 use nom::{le_f64, le_i16, le_u16, le_u24, le_u32, le_u8, IResult, Needed};
@@ -18,6 +18,7 @@ quick_error! {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Allowed,
     Denied,
@@ -52,11 +53,11 @@ enum Opcode {
 }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct InternAtom<'a> {
     only_if_exists: u8,
     name_length: u16,
-    name: &'a [u8],
+    name: Cow<'a, str>,
 }
 
 // Every request contains an 8-bit major opcode and a 16-bit length
@@ -95,7 +96,7 @@ named!(
             >> datab: le_u8
             >> _length_zero: tag!(b"\x00\x00")
             >> length_4b: le_u32
-            >> request: take!(length_4b * 4)
+            >> request: take!(length_4b * 4 - (4 + 2 + 1 + 1))
             >> (Request {
                     opcode: opcode,
                     datab: datab,
@@ -109,7 +110,7 @@ named!(
             opcode: le_u8
             >> datab: le_u8
             >> length_4b: le_u16
-            >> request: take!(length_4b * 4)
+            >> request: take!(length_4b * 4 - (2 + 1 + 1))
             >> (Request {
                     opcode: opcode,
                     datab: datab,
@@ -131,37 +132,45 @@ named!(intern_atom<&[u8], InternAtom>,
         >> ( InternAtom {
             only_if_exists: if_exists,
             name_length: name_length,
-            name: name
+            name: String::from_utf8_lossy(name)
         })
     )
 );
 
 fn analyze_request_opcode(header: Request, data: &[u8]) -> ParseResult {
     let opcode = Opcode::from_u8(header.opcode);
-    println!("{:?}", opcode);
 
     let result = match opcode {
         Some(Opcode::InternAtom) => {
             let intern = intern_atom(data);
-            println!("{:?}", intern);
+            if intern.is_ok() {
+                println!("{:?}", intern.unwrap().1);
+            } else {
+                println!("{:?}", intern);
+            }
             Ok(Outcome::Allowed)
         }
         None => Ok(Outcome::Allowed),
+        _ => {
+            println!("{:?}", opcode);
+            Ok(Outcome::Allowed)
+        }
     };
 
     result
 }
 
 fn analyze_buffer(mut buffer: &[u8]) -> ParseResult {
-    let size = buffer.len();
-
     while buffer.len() > 0 {
+        let size = buffer.len();
+        println!("Buffer size={}", size);
+
         // Parse request headers
         let req = request(buffer);
-        println!("{:?}", req);
 
         if req.is_ok() {
             let (_, req_header) = req.unwrap();
+            println!("{:?}", req_header);
 
             if (req_header.length as usize) > size {
                 warn!(
@@ -172,10 +181,13 @@ fn analyze_buffer(mut buffer: &[u8]) -> ParseResult {
             }
 
             let decision = analyze_request_opcode(req_header, buffer);
-            return decision;
-            //if decision.is_ok() {
-            //    buffer = &buffer[req_header.length as usize..];
-            // }
+            println!("{:?}", decision);
+            if decision.is_ok() {
+                println!("Skipping {} bytes...", req_header.length);
+                buffer = &buffer[req_header.length as usize..];
+            }
+        } else {
+            break;
         }
     }
 
