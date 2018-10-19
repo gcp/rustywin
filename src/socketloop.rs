@@ -18,6 +18,7 @@ use nix::sys::select::{select, FdSet};
 use nix::sys::socket::{getsockopt, sockopt};
 use nix::Error::Sys;
 
+use analyze;
 use ipc;
 use DumpFile;
 
@@ -276,26 +277,33 @@ fn client_message_loop(
 
         if read > 0 {
             info!("C->S {} bytes", read);
-            let write_buff = &buffer[0..read];
-            if pid_vector.lock().unwrap().contains(&client_pid) {
-                match server_stream
-                    .write_all_nonblock(&write_buff, &child_stderr_fd)
-                {
-                    Ok(_) => (),
-                    Err(e) => {
-                        info!("Write error on socket: {}", e);
-                    }
-                }
-            } else {
-                info!("Blocking client-server write after harden.");
-                // Log what we would have blocked in the dumpfile
+
+            let filtered_buffer_pair: (Vec<u8>, Vec<u8>);
+            let mut write_buff: &[u8] = &buffer[0..read];
+
+            if !pid_vector.lock().unwrap().contains(&client_pid) {
+                filtered_buffer_pair = analyze::filter_buffer(write_buff);
+                write_buff = &filtered_buffer_pair.0;
+                let reject_buff = filtered_buffer_pair.1;
+
+                info!("Filtering client-server write after harden.");
+                // Log traffic that we filter into the dumpfile
                 if let Some(ref dump) = dumpfile {
-                    match dump.lock().unwrap().write(write_buff) {
+                    match dump.lock().unwrap().write(&buffer) {
                         Ok(_) => (),
                         Err(e) => {
                             error!("Could not write dumpfile: {}", e);
                         }
                     }
+                }
+            }
+
+            match server_stream
+                .write_all_nonblock(&write_buff, &child_stderr_fd)
+            {
+                Ok(_) => (),
+                Err(e) => {
+                    info!("Write error on socket: {}", e);
                 }
             }
         }

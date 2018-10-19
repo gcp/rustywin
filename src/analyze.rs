@@ -49,7 +49,12 @@ enum_from_primitive! {
 #[derive(Debug, PartialEq)]
 // enum with explicit discriminator
 enum Opcode {
+    ChangeWindowAttributes = 0x2,
     InternAtom = 0x10,
+    ChangeProperty = 0x12,
+    GetProperty = 0x14,
+    GrabButton = 0x1C,
+    QueryExtension = 0x62,
 }
 }
 
@@ -58,6 +63,40 @@ struct InternAtom<'a> {
     only_if_exists: bool,
     name_length: u16,
     name: Cow<'a, str>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GetProperty {
+    delete: bool,
+    window: u32,
+    property: u32,
+    atom_prop_type: u32,
+    offset: u32,
+    length: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct QueryExtension<'a> {
+    name_length: u16,
+    name: Cow<'a, str>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ChangeProperty<'a> {
+    mode: u8,
+    window: u32,
+    property: u32,
+    prop_type: u32,
+    format: u8,
+    data_length: u32,
+    data: &'a [u8],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GrabButton {
+    owner_events: u8,
+    window: u32,
+    // ignore
 }
 
 // Every request contains an 8-bit major opcode and a 16-bit length
@@ -130,9 +169,83 @@ named!(intern_atom<&[u8], InternAtom>,
         >> _pad: le_u16
         >> name: take!(name_length)
         >> ( InternAtom {
-            only_if_exists: only_if_exists == 1,
-            name_length: name_length,
-            name: String::from_utf8_lossy(name)
+                only_if_exists: only_if_exists == 1,
+                name_length: name_length,
+                name: String::from_utf8_lossy(name)
+        })
+    )
+);
+
+named!(getproperty<&[u8], GetProperty>,
+    do_parse!(
+        _opcode: le_u8
+        >> delete: le_u8
+        >> _length: le_u16
+        >> window: le_u32
+        >> property: le_u32
+        >> atom_prop_type: le_u32
+        >> offset: le_u32
+        >> length: le_u32
+        >> ( GetProperty {
+                delete: delete == 1,
+                window: window,
+                property: property,
+                atom_prop_type: atom_prop_type,
+                offset: offset,
+                length: length,
+            })
+    )
+);
+
+named!(queryextension<&[u8], QueryExtension>,
+    do_parse!(
+        _opcode: le_u8
+        >> _dummy: le_u8
+        >> _length: le_u16
+        >> name_length: le_u16
+        >> _pad: le_u16
+        >> name: take!(name_length)
+        >> ( QueryExtension {
+                name_length: name_length,
+                name: String::from_utf8_lossy(name)
+            })
+    )
+);
+
+named!(changeproperty<&[u8], ChangeProperty>,
+    do_parse!(
+        _opcode: le_u8
+        >> mode: le_u8
+        >> _length: le_u16
+        >> window: le_u32
+        >> property: le_u32
+        >> prop_type: le_u32
+        >> prop_format: le_u8
+        >> _pad: le_u24
+        >> data_length: le_u32
+        >> data: take!(data_length)
+        >> (ChangeProperty {
+               mode: mode,
+               window: window,
+               property: property,
+               prop_type: prop_type,
+               format: prop_format,
+               data_length: data_length,
+               data: data,
+        })
+    )
+);
+
+named!(grabbutton<&[u8], GrabButton>,
+    do_parse!(
+        _opcode: le_u8
+        >> owner_events: le_u8
+        >> length: le_u16
+        >> window: le_u32
+        >> _data: take!(length - 4 + 2 + 2)
+        >> (GrabButton {
+               owner_events: owner_events,
+               window: window,
         })
     )
 );
@@ -150,6 +263,42 @@ fn analyze_request_opcode(header: Request, data: &[u8]) -> ParseResult {
             }
             Ok(Outcome::Allowed)
         }
+        Some(Opcode::GetProperty) => {
+            let getprop = getproperty(data);
+            if getprop.is_ok() {
+                println!("{:?}", getprop.unwrap().1);
+            } else {
+                println!("{:?}", getprop);
+            }
+            Ok(Outcome::Allowed)
+        }
+        Some(Opcode::QueryExtension) => {
+            let queryext = queryextension(data);
+            if queryext.is_ok() {
+                println!("{:?}", queryext.unwrap().1);
+            } else {
+                println!("{:?}", queryext);
+            }
+            Ok(Outcome::Allowed)
+        }
+        Some(Opcode::ChangeProperty) => {
+            let changeprop = changeproperty(data);
+            if changeprop.is_ok() {
+                println!("{:?}", changeprop.unwrap().1);
+            } else {
+                println!("{:?}", changeprop);
+            }
+            Ok(Outcome::Allowed)
+        }
+        Some(Opcode::GrabButton) => {
+            let grab = grabbutton(data);
+            if grab.is_ok() {
+                println!("{:?}", grab.unwrap().1);
+            } else {
+                println!("{:?}", grab);
+            }
+            Ok(Outcome::Allowed)
+        }
         None => Ok(Outcome::Allowed),
         _ => {
             println!("{:?}", opcode);
@@ -158,6 +307,66 @@ fn analyze_request_opcode(header: Request, data: &[u8]) -> ParseResult {
     };
 
     result
+}
+
+/// Filters the buffer with X commands. Returns two buffers,
+/// one with accepted and one with rejected requests.
+pub fn filter_buffer(buffer: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let mut out_reject_buff = Vec::with_capacity(buffer.len());
+    let mut out_accept_buff = Vec::with_capacity(buffer.len());
+    let mut work_buffer = &buffer[0..buffer.len()];
+
+    while buffer.len() > 0 {
+        let size = work_buffer.len();
+        println!("Buffer size={}", size);
+
+        // Parse request headers
+        let req = request(work_buffer);
+        if req.is_err() {
+            out_reject_buff.extend(&work_buffer[0..]);
+            break;
+        }
+
+        let (_, req_header) = req.unwrap();
+        println!("{:?}", req_header);
+
+        if (req_header.length as usize) > size {
+            warn!(
+                "Packet size ({}) is smaller than header size ({})",
+                size, req_header.length
+            );
+            out_reject_buff.extend(&work_buffer[0..]);
+            break;
+        }
+
+        let decision = analyze_request_opcode(req_header, work_buffer);
+        println!("{:?}", decision);
+        match decision {
+            Ok(Outcome::Allowed) => {
+                out_accept_buff
+                    .extend(&work_buffer[0..req_header.length as usize]);
+            }
+            Ok(Outcome::Denied) => {
+                out_reject_buff
+                    .extend(&work_buffer[0..req_header.length as usize]);
+            }
+            Err(_) => {
+                out_accept_buff
+                    .extend(&work_buffer[0..req_header.length as usize]);
+            }
+        }
+        if decision.is_ok() {
+            println!("Skipping {} bytes...", req_header.length);
+            work_buffer = &work_buffer[req_header.length as usize..];
+        }
+    }
+
+    println!(
+        "Accepted {} bytes, rejected {} bytes",
+        out_accept_buff.len(),
+        out_reject_buff.len(),
+    );
+    (out_accept_buff, out_reject_buff)
 }
 
 fn analyze_buffer(mut buffer: &[u8]) -> ParseResult {
